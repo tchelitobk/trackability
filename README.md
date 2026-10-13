@@ -41,6 +41,15 @@ Everything is stored on the device (AsyncStorage). Logs are kept per week.
 
 Free instances sleep after 15 minutes idle, so the first visit after a break takes up to a minute. Every push to the branch redeploys automatically. To lock everyone out, change `ACCESS_PASSWORD` in Render.
 
+**Or deploy on Railway (always on, paid):**
+
+1. Sign in at [railway.com](https://railway.com) with GitHub.
+2. **New Project → Deploy from GitHub repo**, pick this repo. Railway reads `railway.json` (build with `npm run build:web`, start with `npm run serve`).
+3. In the service's **Variables** tab add `ACCESS_PASSWORD` with your team password. The first deploy fails until it's set; it redeploys when you add it.
+4. In **Settings → Networking**, click **Generate Domain** to get the public `https://….up.railway.app` link.
+
+Railway doesn't sleep, so there's no slow first load, but it isn't free after the trial.
+
 **Run the same thing locally:**
 
 ```bash
