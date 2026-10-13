@@ -4,6 +4,18 @@ import { AppState } from 'react-native';
 
 import { DEFAULT_EVENT, DEFAULT_PROFILE } from '@/lib/defaults';
 import { EVENT_PRESETS, makeEvent, nextEventKind } from '@/lib/events';
+import {
+  emptyWeek,
+  migrateLogs,
+  saveCheckIn as saveCheckInTo,
+  setEffort,
+  setSessionDone,
+  toggleItem,
+  toggleMeal as toggleMealIn,
+  toggleShopping,
+  type CheckIn,
+  type WeekLog,
+} from '@/lib/logbook';
 import { buildWeekFuel, type WeekFuel } from '@/lib/mealPlanner';
 import { buildWeekPlan } from '@/lib/scheduler';
 import { dayKeyOf, startOfWeek, toISODate, weekIdOf } from '@/lib/time';
@@ -16,16 +28,20 @@ const STORAGE_KEY = 'perform:v1';
 type Stored = {
   profile: Profile;
   event: WeekEvent;
-  /** Per-week ticks: session ids, timeline item keys, shopping items. */
-  completed: Record<string, string[]>;
-  done: Record<string, string[]>;
-  shopping: Record<string, string[]>;
+  onboarded: boolean;
+  /** Tips the athlete has dismissed. */
+  hints: string[];
+  logs: Record<string, WeekLog>;
 };
 
 type PlannerContextValue = {
   ready: boolean;
+  onboarded: boolean;
+  completeOnboarding: () => void;
+  restartOnboarding: () => void;
   today: Date;
   todayKey: DayKey;
+  todayISO: string;
   profile: Profile;
   updateProfile: (patch: Partial<Profile>) => void;
   resetProfile: () => void;
@@ -35,21 +51,27 @@ type PlannerContextValue = {
   plan: WeekPlan;
   fuel: WeekFuel;
   sessions: PlanSession[];
+  week: WeekLog;
   toggleSession: (id: string) => void;
+  rateSession: (id: string, effort: number) => void;
   isDone: (key: string) => boolean;
   toggleDone: (key: string) => void;
+  isEaten: (mealId: string) => boolean;
+  toggleMeal: (mealId: string) => void;
   isBought: (food: string) => boolean;
   toggleBought: (food: string) => void;
+  checkIn: (date: string) => CheckIn | undefined;
+  saveCheckIn: (date: string, patch: Omit<CheckIn, 'at'>) => void;
+  hintSeen: (id: string) => boolean;
+  dismissHint: (id: string) => void;
+  resetHints: () => void;
 };
 
 const PlannerContext = createContext<PlannerContextValue | null>(null);
 
-const toggleIn = (list: string[] = [], value: string) =>
-  list.includes(value) ? list.filter((item) => item !== value) : [...list, value];
-
-/** Keep only the last few weeks of ticks so storage doesn't grow forever. */
-const recent = (record: Record<string, string[]>) =>
-  Object.fromEntries(Object.entries(record).sort(([a], [b]) => b.localeCompare(a)).slice(0, 6));
+/** Keep the last few weeks of logs so storage doesn't grow forever. */
+const recent = (logs: Record<string, WeekLog>) =>
+  Object.fromEntries(Object.entries(logs).sort(([a], [b]) => b.localeCompare(a)).slice(0, 8));
 
 export function PlannerProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
@@ -57,9 +79,9 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
   const [stored, setStored] = useState<Stored>({
     profile: DEFAULT_PROFILE,
     event: DEFAULT_EVENT,
-    completed: {},
-    done: {},
-    shopping: {},
+    onboarded: false,
+    hints: [],
+    logs: {},
   });
   const loaded = useRef(false);
 
@@ -67,13 +89,18 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
     AsyncStorage.getItem(STORAGE_KEY)
       .then((raw) => {
         if (!raw) return;
-        const saved = JSON.parse(raw) as Partial<Stored>;
+        const saved = JSON.parse(raw) as Partial<Stored> & {
+          completed?: Record<string, string[]>;
+          done?: Record<string, string[]>;
+          shopping?: Record<string, string[]>;
+        };
         setStored((current) => ({
           profile: { ...current.profile, ...saved.profile },
           event: saved.event ?? current.event,
-          completed: saved.completed ?? {},
-          done: saved.done ?? {},
-          shopping: saved.shopping ?? {},
+          // Anyone with saved data from before onboarding existed has already set up.
+          onboarded: saved.onboarded ?? Boolean(saved.profile),
+          hints: saved.hints ?? [],
+          logs: migrateLogs(saved),
         }));
       })
       .catch(() => undefined)
@@ -85,13 +112,7 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!loaded.current) return;
-    const toSave: Stored = {
-      ...stored,
-      completed: recent(stored.completed),
-      done: recent(stored.done),
-      shopping: recent(stored.shopping),
-    };
-    AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(toSave)).catch(() => undefined);
+    AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({ ...stored, logs: recent(stored.logs) })).catch(() => undefined);
   }, [stored]);
 
   // Roll over to a new day/week when the app comes back to the foreground.
@@ -106,21 +127,35 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
 
   const weekStart = useMemo(() => startOfWeek(today), [today]);
   const weekId = weekIdOf(weekStart);
+  const week = useMemo(() => stored.logs[weekId] ?? emptyWeek(), [stored.logs, weekId]);
 
+  const completed = useMemo(() => new Set(Object.keys(week.sessions)), [week.sessions]);
   const plan = useMemo(
-    () => buildWeekPlan(stored.profile, stored.event, weekStart, new Set(stored.completed[weekId] ?? [])),
-    [stored.profile, stored.event, stored.completed, weekStart, weekId],
+    () => buildWeekPlan(stored.profile, stored.event, weekStart, completed),
+    [stored.profile, stored.event, weekStart, completed],
   );
   const fuel = useMemo(() => buildWeekFuel(stored.profile, plan), [stored.profile, plan]);
   const sessions = useMemo(() => plan.days.flatMap((day) => day.sessions), [plan]);
+
+  const updateWeek = useCallback(
+    (fn: (log: WeekLog) => WeekLog) =>
+      setStored((current) => ({
+        ...current,
+        logs: { ...current.logs, [weekId]: fn(current.logs[weekId] ?? emptyWeek()) },
+      })),
+    [weekId],
+  );
 
   const updateProfile = useCallback((patch: Partial<Profile>) => {
     setStored((current) => ({ ...current, profile: { ...current.profile, ...patch } }));
   }, []);
 
   const resetProfile = useCallback(() => {
-    setStored((current) => ({ ...current, profile: DEFAULT_PROFILE }));
+    setStored((current) => ({ ...current, profile: DEFAULT_PROFILE, event: DEFAULT_EVENT }));
   }, []);
+
+  const completeOnboarding = useCallback(() => setStored((current) => ({ ...current, onboarded: true })), []);
+  const restartOnboarding = useCallback(() => setStored((current) => ({ ...current, onboarded: false })), []);
 
   const setEvent = useCallback((kind: EventKind, day?: DayKey | null, time?: Minutes | null) => {
     setStored((current) => {
@@ -136,45 +171,39 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const toggleSession = useCallback(
-    (id: string) => {
-      setStored((current) => ({
-        ...current,
-        completed: { ...current.completed, [weekId]: toggleIn(current.completed[weekId], id) },
-      }));
-    },
-    [weekId],
+    (id: string) => updateWeek((log) => setSessionDone(log, id, !log.sessions[id])),
+    [updateWeek],
+  );
+  const rateSession = useCallback((id: string, effort: number) => updateWeek((log) => setEffort(log, id, effort)), [updateWeek]);
+  const toggleDone = useCallback((key: string) => updateWeek((log) => toggleItem(log, key)), [updateWeek]);
+  const toggleMeal = useCallback((id: string) => updateWeek((log) => toggleMealIn(log, id)), [updateWeek]);
+  const toggleBought = useCallback((food: string) => updateWeek((log) => toggleShopping(log, food)), [updateWeek]);
+  const saveCheckIn = useCallback(
+    (date: string, patch: Omit<CheckIn, 'at'>) => updateWeek((log) => saveCheckInTo(log, date, patch)),
+    [updateWeek],
   );
 
-  const toggleDone = useCallback(
-    (key: string) => {
-      setStored((current) => ({
-        ...current,
-        done: { ...current.done, [weekId]: toggleIn(current.done[weekId], key) },
-      }));
-    },
-    [weekId],
-  );
+  const isDone = useCallback((key: string) => week.items.includes(key), [week.items]);
+  const isEaten = useCallback((id: string) => week.meals.includes(id), [week.meals]);
+  const isBought = useCallback((food: string) => week.shopping.includes(food), [week.shopping]);
+  const checkIn = useCallback((date: string) => week.checkIns[date], [week.checkIns]);
 
-  const toggleBought = useCallback(
-    (food: string) => {
-      setStored((current) => ({
-        ...current,
-        shopping: { ...current.shopping, [weekId]: toggleIn(current.shopping[weekId], food) },
-      }));
-    },
-    [weekId],
+  const hintSeen = useCallback((id: string) => stored.hints.includes(id), [stored.hints]);
+  const dismissHint = useCallback(
+    (id: string) => setStored((current) => ({ ...current, hints: [...new Set([...current.hints, id])] })),
+    [],
   );
-
-  const doneList = stored.done[weekId];
-  const boughtList = stored.shopping[weekId];
-  const isDone = useCallback((key: string) => Boolean(doneList?.includes(key)), [doneList]);
-  const isBought = useCallback((food: string) => Boolean(boughtList?.includes(food)), [boughtList]);
+  const resetHints = useCallback(() => setStored((current) => ({ ...current, hints: [] })), []);
 
   const value = useMemo<PlannerContextValue>(
     () => ({
       ready,
+      onboarded: stored.onboarded,
+      completeOnboarding,
+      restartOnboarding,
       today,
       todayKey: dayKeyOf(today),
+      todayISO: toISODate(today),
       profile: stored.profile,
       updateProfile,
       resetProfile,
@@ -184,17 +213,29 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
       plan,
       fuel,
       sessions,
+      week,
       toggleSession,
+      rateSession,
       isDone,
       toggleDone,
+      isEaten,
+      toggleMeal,
       isBought,
       toggleBought,
+      checkIn,
+      saveCheckIn,
+      hintSeen,
+      dismissHint,
+      resetHints,
     }),
     [
       ready,
-      today,
+      stored.onboarded,
       stored.profile,
       stored.event,
+      completeOnboarding,
+      restartOnboarding,
+      today,
       updateProfile,
       resetProfile,
       setEvent,
@@ -202,11 +243,20 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
       plan,
       fuel,
       sessions,
+      week,
       toggleSession,
+      rateSession,
       isDone,
       toggleDone,
+      isEaten,
+      toggleMeal,
       isBought,
       toggleBought,
+      checkIn,
+      saveCheckIn,
+      hintSeen,
+      dismissHint,
+      resetHints,
     ],
   );
 

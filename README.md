@@ -14,16 +14,19 @@ npm run typecheck
 npm run lint
 ```
 
-## Screens
+## Using the app
+
+New users go through a 2-minute setup (sport, work hours, training days, sleep, fixed commitments, this week's focus, food). Every answer can be changed later under **You**.
 
 | Tab | What it does |
 | --- | --- |
-| **Today** | The week rail, the next window, the day's timeline (session, mobility, fuel, wind-down), weekly load, and the week's main event. Tap the event card to cycle event types. |
-| **Plan** | Pick the event (build muscle, mid-week match, weekend match, 10K, HYROX, deload) plus its day and time. Shows the sleep anchor and the reasoning behind the week, and each day's session with *why this slot* and the full workout. |
-| **Fuel** | Daily macro targets vs what's planned, meals timed around training, two prep sessions (what to cook, how much, in what order), and a checkable shopping list. |
-| **Profile** | Shifts per day, commute, wake time and sleep need, chronotype, open days, sessions per week, clients/team/family blocks, diet and exclusions. |
+| **Today** | What's up next, with one button to log it. Your whole day in time order (training, meals, recovery), each with a check circle, a morning check-in prompt, and fuel and week progress. |
+| **Plan** | The week day by day. Each session shows its time and effort, a check circle, and a "See workout & why" panel. Change this week's focus from the top card. |
+| **＋ Log** | One place to log a day: how you slept and feel (gives a plain "push / hold back" call), sessions with a 1–10 effort rating, meals (or "ate all as planned"), and recovery habits. Earlier days this week can be logged too. |
+| **Fuel** | Meals timed to training, with eaten vs planned for the day; the two prep sessions step by step; and a checkable shopping list. |
+| **You** | Profile and schedule settings, tips, run setup again, reset. |
 
-Everything is stored on the device (AsyncStorage). Completed sessions, ticked timeline items and shopping checks are kept per week.
+Everything is stored on the device (AsyncStorage). Logs are kept per week.
 
 ## How the schedule is built (`src/lib/scheduler.ts`)
 
@@ -46,11 +49,12 @@ This is general performance guidance, not medical or dietetic advice. Adjust bod
 ## Project layout
 
 ```
-src/app/            routes: (tabs)/index (Today), plan, fuel; profile (modal)
+src/app/            routes: onboarding, (tabs)/index · plan · fuel · you, log (modal), edit/[section] (modal)
 src/context/        PlannerContext: state, persistence, derived plan + fuel
-src/lib/            pure logic: scheduler, sessions, events, nutrition, foods, recipes, mealPlanner
-src/lib/__tests__/  jest tests for the engines
-src/components/     shared UI (chips, steppers, cards)
+src/lib/            pure logic: scheduler, sessions, events, nutrition, foods, recipes, mealPlanner, logbook
+src/lib/__tests__/  jest tests for the engines and the logbook
+src/components/     ui (design system), setup (shared setup steps), log (effort picker, task rows)
+src/constants/      colors and type scale
 ```
 
 App icons and splash images are still the Expo template placeholders.

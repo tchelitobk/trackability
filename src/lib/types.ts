@@ -84,7 +84,7 @@ export type PlanSession = {
   duration: string;
   minutes: number;
   color: SessionColor;
-  /** Session RPE, 1-10. */
+  /** Planned effort (RPE), 1-10. */
   intensity: number;
   isEvent: boolean;
   blocks: string[];

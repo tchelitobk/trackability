@@ -2,221 +2,213 @@ import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { Bullet, Card, Chip, Eyebrow, ScreenHeader, SectionTitle, Stepper, shared, useScreenPadding, useToneColor, type Tone } from '@/components/ui';
+import { EffortSheet, effortLabel } from '@/components/log';
+import { Bullet, Card, CheckCircle, Eyebrow, Header, Screen, SectionTitle, shared, useToneColor, type Tone } from '@/components/ui';
+import { type as t } from '@/constants/type';
 import { usePlanner } from '@/context/PlannerContext';
 import { useColors } from '@/hooks/useColors';
-import { EVENT_ORDER, EVENT_PRESETS, isCompetition, isMatch } from '@/lib/events';
+import { EVENT_PRESETS } from '@/lib/events';
 import { LOAD_LABELS } from '@/lib/nutrition';
-import { formatClock, fromISODate, hm, monthShort } from '@/lib/time';
-import { DAY_KEYS, type PlanDay, type PlanSession } from '@/lib/types';
+import { addDays, DAY_NAMES, formatClock, fromISODate, monthShort } from '@/lib/time';
+import type { PlanDay, PlanSession } from '@/lib/types';
 
 const toneOf = (color: PlanSession['color']): Tone => (color === 'orange' ? 'apricot' : color === 'blue' ? 'sky' : 'lime');
 
 export default function PlanScreen() {
   const colors = useColors();
   const router = useRouter();
-  const padding = useScreenPadding();
-  const { plan, weekEvent, setEvent, todayKey } = usePlanner();
+  const { plan, weekEvent, todayKey, week, toggleSession, rateSession } = usePlanner();
   const [open, setOpen] = useState<string | null>(null);
+  const [allReasons, setAllReasons] = useState(false);
+  const [rating, setRating] = useState<PlanSession | null>(null);
 
   const monday = fromISODate(plan.weekStart);
-  const competition = isCompetition(weekEvent.kind);
-  const time = weekEvent.time ?? EVENT_PRESETS[weekEvent.kind].time ?? hm(19);
+  const sunday = addDays(monday, 6);
+  const reasons = [...plan.warnings.map((w) => ({ text: w, tone: 'apricot' as Tone })), ...plan.insights.map((i) => ({ text: i, tone: 'lime' as Tone }))];
+  const shown = allReasons ? reasons : reasons.slice(0, 2);
 
-  const shiftTime = (delta: number) => {
-    const next = Math.min(hm(22, 30), Math.max(hm(5), time + delta));
-    setEvent(weekEvent.kind, weekEvent.day, next);
+  const toggle = (session: PlanSession) => {
+    const done = Boolean(week.sessions[session.id]);
+    toggleSession(session.id);
+    if (!done) setRating(session);
   };
 
   return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: colors.background }}
-      contentContainerStyle={padding}
-      showsVerticalScrollIndicator={false}
-    >
-      <ScreenHeader
-        eyebrow="PERFORM / PLAN"
-        title={`Week of ${monthShort(monday)} ${monday.getDate()}`}
-        right={
-          <Pressable
-            testID="edit-constraints"
-            accessibilityLabel="Edit schedule constraints"
-            onPress={() => router.push('/profile')}
-            style={({ pressed }) => [styles.iconButton, { backgroundColor: colors.secondary }, pressed && shared.pressed]}
-          >
-            <Feather name="sliders" size={17} color={colors.primary} />
-          </Pressable>
-        }
+    <Screen testID="plan-screen">
+      <Header
+        eyebrow={`${monthShort(monday).toUpperCase()} ${monday.getDate()} – ${monthShort(sunday).toUpperCase()} ${sunday.getDate()}`}
+        title="Your week"
+        subtitle="When to train, and why it’s timed that way."
       />
 
-      <SectionTitle eyebrow="BUILT AROUND" title={EVENT_PRESETS[weekEvent.kind].label} />
-      <Card>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
-          {EVENT_ORDER.map((kind) => (
-            <Chip
-              key={kind}
-              testID={`event-${kind}`}
-              label={EVENT_PRESETS[kind].label}
-              selected={weekEvent.kind === kind}
-              tone={isCompetition(kind) ? 'apricot' : 'lime'}
-              onPress={() => setEvent(kind)}
-            />
-          ))}
-        </ScrollView>
-        <Text style={[styles.blurb, { color: colors.mutedForeground }]}>{EVENT_PRESETS[weekEvent.kind].blurb}</Text>
+      <Pressable
+        testID="plan-event"
+        accessibilityRole="button"
+        accessibilityHint="Change what this week is built around"
+        onPress={() => router.push('/edit/event')}
+        style={({ pressed }) => [styles.event, { backgroundColor: colors.card, borderColor: colors.border }, pressed && shared.pressed]}
+      >
+        <View style={[styles.eventIcon, { backgroundColor: colors.accentSoft }]}>
+          <Feather name="award" size={18} color={colors.accent} />
+        </View>
+        <View style={styles.flex}>
+          <Eyebrow>BUILT AROUND</Eyebrow>
+          <Text style={[t.subheading, { color: colors.foreground, marginTop: 4 }]}>{weekEvent.title}</Text>
+          <Text style={[t.caption, { color: colors.mutedForeground, marginTop: 2 }]}>{EVENT_PRESETS[weekEvent.kind].blurb}</Text>
+        </View>
+        <Text style={[t.label, { color: colors.primary }]}>Change</Text>
+      </Pressable>
 
-        {competition ? (
-          <View style={styles.eventControls}>
-            <Eyebrow>{isMatch(weekEvent.kind) ? 'MATCH DAY' : 'RACE DAY'}</Eyebrow>
-            <View style={styles.dayChips}>
-              {DAY_KEYS.map((day) => (
-                <Chip
-                  key={day}
-                  compact
-                  testID={`event-day-${day}`}
-                  label={day}
-                  tone="apricot"
-                  selected={weekEvent.day === day}
-                  onPress={() => setEvent(weekEvent.kind, day, weekEvent.time)}
-                />
-              ))}
-            </View>
-            <Stepper
-              testID="event-time"
-              label={isMatch(weekEvent.kind) ? 'Kick-off' : 'Start'}
-              value={formatClock(time)}
-              onDecrement={() => shiftTime(-15)}
-              onIncrement={() => shiftTime(15)}
-            />
-          </View>
-        ) : null}
-      </Card>
-
-      <SectionTitle eyebrow="SLEEP ANCHOR" title="Protect the night first" />
-      <Card>
+      <Card style={styles.sleep}>
         <View style={styles.sleepRow}>
           {[
-            { label: 'Wake', value: formatClock(plan.sleep.wake), icon: 'sunrise' as const },
-            { label: 'Wind-down', value: formatClock(plan.sleep.windDown), icon: 'moon' as const },
-            { label: 'Lights out', value: formatClock(plan.sleep.lightsOut), icon: 'power' as const },
-          ].map((item) => (
-            <View key={item.label} style={styles.sleepCell}>
-              <Feather name={item.icon} size={15} color={colors.accent} />
-              <Text style={[styles.sleepValue, { color: colors.foreground }]}>{item.value}</Text>
-              <Text style={[styles.sleepLabel, { color: colors.mutedForeground }]}>{item.label}</Text>
+            { label: 'Wake', value: formatClock(plan.sleep.wake) },
+            { label: 'Wind down', value: formatClock(plan.sleep.windDown) },
+            { label: 'Lights out', value: formatClock(plan.sleep.lightsOut) },
+          ].map((item, index) => (
+            <View key={item.label} style={[styles.sleepCell, index > 0 && { borderLeftWidth: 1, borderLeftColor: colors.border }]}>
+              <Text style={[t.heading, { color: colors.foreground }]}>{item.value.replace(':00', '')}</Text>
+              <Text style={[t.micro, { color: colors.mutedForeground, marginTop: 3 }]}>{item.label}</Text>
             </View>
           ))}
         </View>
-        <View style={[styles.divider, { backgroundColor: colors.border }]} />
-        <View style={styles.bullets}>
-          {plan.insights.map((line) => (
-            <Bullet key={line}>{line}</Bullet>
-          ))}
-          {plan.warnings.map((line) => (
-            <Bullet key={line} tone="apricot">
-              {line}
-            </Bullet>
-          ))}
-        </View>
+        <Text style={[t.caption, styles.sleepNote, { color: colors.secondaryForeground, borderTopColor: colors.border }]}>
+          Hard sessions always finish by {formatClock(plan.sleep.hardCutoff)}, so you can actually fall asleep.
+        </Text>
       </Card>
 
-      <SectionTitle eyebrow="THE WEEK" title="Day by day" />
+      {reasons.length > 0 ? (
+        <Card style={styles.reasons}>
+          <Eyebrow>WHY IT LOOKS LIKE THIS</Eyebrow>
+          <View style={styles.bullets}>
+            {shown.map((r) => (
+              <Bullet key={r.text} tone={r.tone}>
+                {r.text}
+              </Bullet>
+            ))}
+          </View>
+          {reasons.length > 2 ? (
+            <Pressable accessibilityRole="button" onPress={() => setAllReasons(!allReasons)} hitSlop={8} style={styles.more}>
+              <Text style={[t.label, { color: colors.primary }]}>{allReasons ? 'Show less' : `Show all ${reasons.length}`}</Text>
+            </Pressable>
+          ) : null}
+        </Card>
+      ) : null}
+
+      <SectionTitle title="Day by day" eyebrow="TAP A SESSION FOR THE WORKOUT" />
       <View style={styles.days}>
         {plan.days.map((day) => (
-          <DayCard
+          <DayBlock
             key={day.day}
             day={day}
             today={day.day === todayKey}
             open={open}
-            onToggle={(id) => {
-              Haptics.selectionAsync();
+            done={(id) => Boolean(week.sessions[id])}
+            effort={(id) => week.sessions[id]?.effort}
+            onOpen={(id) => {
+              Haptics.selectionAsync().catch(() => undefined);
               setOpen((current) => (current === id ? null : id));
             }}
+            onToggle={toggle}
           />
         ))}
       </View>
-    </ScrollView>
+
+      <EffortSheet
+        visible={Boolean(rating)}
+        title={rating?.title ?? ''}
+        value={rating ? week.sessions[rating.id]?.effort : undefined}
+        onChange={(effort) => rating && rateSession(rating.id, effort)}
+        onClose={() => setRating(null)}
+      />
+    </Screen>
   );
 }
 
-function DayCard({
+function DayBlock({
   day,
   today,
   open,
+  done,
+  effort,
+  onOpen,
   onToggle,
 }: {
   day: PlanDay;
   today: boolean;
   open: string | null;
-  onToggle: (id: string) => void;
+  done: (id: string) => boolean;
+  effort: (id: string) => number | undefined;
+  onOpen: (id: string) => void;
+  onToggle: (session: PlanSession) => void;
 }) {
   const colors = useColors();
   const tone = useToneColor();
-  const { toggleSession } = usePlanner();
   const date = fromISODate(day.date);
-  const accent = tone(toneOf(day.color));
 
   return (
-    <Card style={[styles.dayCard, today && { borderColor: colors.primary }]}>
+    <Card style={[styles.day, today && { borderColor: 'rgba(212,241,113,0.4)' }]}>
       <View style={styles.dayHead}>
-        <View style={[styles.dayBadge, { backgroundColor: colors.secondary }]}>
-          <Text style={[styles.dayBadgeDay, { color: colors.mutedForeground }]}>{day.day.toUpperCase()}</Text>
-          <Text style={[styles.dayBadgeDate, { color: colors.foreground }]}>{date.getDate()}</Text>
+        <View style={styles.dayDate}>
+          <Text style={[t.micro, { color: today ? colors.primary : colors.mutedForeground, letterSpacing: 0.8 }]}>
+            {today ? 'TODAY' : day.day.toUpperCase()}
+          </Text>
+          <Text style={[t.heading, { color: colors.foreground }]}>{date.getDate()}</Text>
         </View>
         <View style={styles.flex}>
-          <Text style={[styles.dayLabel, { color: accent }]}>{day.label.toUpperCase()}</Text>
-          <Text style={[styles.dayLoad, { color: colors.mutedForeground }]}>
-            {today ? 'Today · ' : ''}
-            {LOAD_LABELS[day.load]}
-          </Text>
+          <Text style={[t.bodyStrong, { color: colors.foreground }]}>{DAY_NAMES[day.day]}</Text>
+          <Text style={[t.caption, { color: colors.mutedForeground, marginTop: 1 }]}>{LOAD_LABELS[day.load]}</Text>
         </View>
       </View>
 
       {day.sessions.length === 0 ? (
-        <Text style={[styles.restLine, { color: colors.mutedForeground }]}>
-          {day.micro
-            .filter((m) => m.kind !== 'winddown')
-            .map((m) => `${m.title} ${formatClock(m.start)}`)
-            .join(' · ') || 'Full rest'}
+        <Text style={[t.caption, styles.rest, { color: colors.mutedForeground, borderTopColor: colors.border }]}>
+          No training. {day.micro.filter((m) => m.kind === 'downshift' || m.kind === 'mobility').map((m) => `${m.title} ${formatClock(m.start)}`).join(' · ') || 'Rest and recover.'}
         </Text>
       ) : null}
 
       {day.sessions.map((session) => {
         const expanded = open === session.id;
-        const sessionTone = tone(toneOf(session.color));
+        const accent = tone(toneOf(session.color));
+        const isDone = done(session.id);
+        const rated = effort(session.id);
         return (
-          <View key={session.id} style={styles.session}>
-            <Pressable
-              testID={`plan-session-${session.id}`}
-              onPress={() => onToggle(session.id)}
-              style={({ pressed }) => [styles.sessionRow, pressed && shared.pressed]}
-            >
-              <View style={[styles.sessionBar, { backgroundColor: sessionTone }]} />
-              <View style={styles.flex}>
-                <Text style={[styles.sessionTime, { color: colors.mutedForeground }]}>
-                  {session.time} – {formatClock(session.end)} · {session.duration}
+          <View key={session.id} style={[styles.session, { borderTopColor: colors.border }]}>
+            <View style={styles.sessionRow}>
+              <View style={[styles.bar, { backgroundColor: accent }]} />
+              <Pressable
+                testID={`plan-session-${session.id}`}
+                accessibilityRole="button"
+                accessibilityState={{ expanded }}
+                onPress={() => onOpen(session.id)}
+                style={({ pressed }) => [styles.flex, pressed && shared.pressed]}
+              >
+                <Text style={[t.micro, { color: colors.mutedForeground }]}>
+                  {session.time} – {formatClock(session.end)}
                 </Text>
-                <Text
-                  style={[
-                    styles.sessionTitle,
-                    { color: colors.foreground },
-                    session.completed && styles.done,
-                  ]}
-                >
-                  {session.title}
+                <Text style={[t.subheading, { color: colors.foreground, marginTop: 3 }, isDone && styles.done]}>{session.title}</Text>
+                <Text style={[t.caption, { color: colors.mutedForeground, marginTop: 2 }]}>
+                  {isDone && rated ? `Logged · felt ${rated}/10 ${effortLabel(rated).toLowerCase()}` : `${session.duration} · effort ${session.intensity}/10`}
                 </Text>
-                <Text style={[styles.sessionFocus, { color: colors.mutedForeground }]}>
-                  {session.focus} · RPE {session.intensity}
-                </Text>
-              </View>
-              <Feather name={expanded ? 'chevron-up' : 'chevron-down'} size={16} color={colors.mutedForeground} />
-            </Pressable>
+                <View style={styles.expandRow}>
+                  <Text style={[t.label, { color: accent }]}>{expanded ? 'Hide details' : session.isEvent ? 'Game plan & why' : 'See workout & why'}</Text>
+                  <Feather name={expanded ? 'chevron-up' : 'chevron-down'} size={15} color={accent} />
+                </View>
+              </Pressable>
+              <CheckCircle
+                testID={`plan-check-${session.id}`}
+                done={isDone}
+                tone={toneOf(session.color)}
+                label={`${isDone ? 'Undo' : 'Log'} ${session.title}`}
+                onPress={() => onToggle(session)}
+              />
+            </View>
 
             {expanded ? (
-              <View style={[styles.detail, { borderColor: colors.border }]}>
-                <Eyebrow>WHY THIS SLOT</Eyebrow>
+              <View style={[styles.detail, { backgroundColor: colors.secondary }]}>
+                <Eyebrow>WHY THIS DAY AND TIME</Eyebrow>
                 <View style={styles.bullets}>
                   {session.why.map((line) => (
                     <Bullet key={line} tone={toneOf(session.color)}>
@@ -224,40 +216,14 @@ function DayCard({
                     </Bullet>
                   ))}
                 </View>
-                <Eyebrow>{session.isEvent ? 'GAME PLAN' : 'SESSION'}</Eyebrow>
+                <Eyebrow style={{ marginTop: 6 }}>{session.isEvent ? 'GAME PLAN' : 'THE WORKOUT'}</Eyebrow>
                 <View style={styles.blocks}>
                   {session.blocks.map((block) => (
-                    <Text key={block} style={[styles.block, { color: colors.secondaryForeground }]}>
+                    <Text key={block} style={[t.body, { color: colors.secondaryForeground }]}>
                       {block}
                     </Text>
                   ))}
                 </View>
-                <Pressable
-                  testID={`complete-${session.id}`}
-                  onPress={() => {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    toggleSession(session.id);
-                  }}
-                  style={({ pressed }) => [
-                    styles.doneButton,
-                    { backgroundColor: session.completed ? colors.secondary : colors.primary },
-                    pressed && shared.pressed,
-                  ]}
-                >
-                  <Feather
-                    name={session.completed ? 'rotate-ccw' : 'check'}
-                    size={14}
-                    color={session.completed ? colors.primary : colors.primaryForeground}
-                  />
-                  <Text
-                    style={[
-                      styles.doneLabel,
-                      { color: session.completed ? colors.primary : colors.primaryForeground },
-                    ]}
-                  >
-                    {session.completed ? 'Mark not done' : 'Mark done'}
-                  </Text>
-                </Pressable>
               </View>
             ) : null}
           </View>
@@ -269,44 +235,25 @@ function DayCard({
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  iconButton: { width: 40, height: 40, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
-  chipRow: { gap: 8, paddingRight: 4 },
-  blurb: { fontFamily: 'Inter_400Regular', fontSize: 12, marginTop: 12 },
-  eventControls: { marginTop: 16, gap: 10 },
-  dayChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  sleepRow: { flexDirection: 'row', justifyContent: 'space-between' },
-  sleepCell: { flex: 1, gap: 5 },
-  sleepValue: { fontFamily: 'Inter_700Bold', fontSize: 16, letterSpacing: -0.4 },
-  sleepLabel: { fontFamily: 'Inter_500Medium', fontSize: 10 },
-  divider: { height: 1, marginVertical: 14 },
-  bullets: { gap: 9 },
+  event: { marginHorizontal: 20, borderRadius: 22, borderWidth: 1, padding: 15, flexDirection: 'row', alignItems: 'center', gap: 13 },
+  eventIcon: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  sleep: { marginTop: 12, paddingVertical: 16, paddingHorizontal: 0 },
+  sleepRow: { flexDirection: 'row' },
+  sleepCell: { flex: 1, alignItems: 'center' },
+  sleepNote: { borderTopWidth: 1, marginTop: 14, paddingTop: 12, paddingHorizontal: 18, textAlign: 'center' },
+  reasons: { marginTop: 12 },
+  bullets: { gap: 10, marginTop: 10 },
+  more: { marginTop: 12, alignSelf: 'flex-start' },
   days: { gap: 10 },
-  dayCard: { padding: 13 },
-  dayHead: { flexDirection: 'row', alignItems: 'center', gap: 11 },
-  dayBadge: { width: 44, height: 48, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
-  dayBadgeDay: { fontFamily: 'Inter_700Bold', fontSize: 9, letterSpacing: 0.5 },
-  dayBadgeDate: { fontFamily: 'Inter_700Bold', fontSize: 17, marginTop: 2 },
-  dayLabel: { fontFamily: 'Inter_700Bold', fontSize: 10, letterSpacing: 1.2 },
-  dayLoad: { fontFamily: 'Inter_500Medium', fontSize: 12, marginTop: 4 },
-  restLine: { fontFamily: 'Inter_400Regular', fontSize: 12, marginTop: 10, marginLeft: 55 },
-  session: { marginTop: 10 },
-  sessionRow: { flexDirection: 'row', alignItems: 'center', gap: 11 },
-  sessionBar: { width: 4, alignSelf: 'stretch', borderRadius: 2, marginLeft: 20, marginRight: 20 },
-  sessionTime: { fontFamily: 'Inter_500Medium', fontSize: 11 },
-  sessionTitle: { fontFamily: 'Inter_700Bold', fontSize: 15, marginTop: 4 },
-  sessionFocus: { fontFamily: 'Inter_400Regular', fontSize: 11.5, marginTop: 3 },
-  done: { textDecorationLine: 'line-through', opacity: 0.55 },
-  detail: { marginTop: 12, marginLeft: 55, paddingTop: 12, borderTopWidth: 1, gap: 10 },
-  blocks: { gap: 6 },
-  block: { fontFamily: 'Inter_500Medium', fontSize: 12.5, lineHeight: 18 },
-  doneButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 7,
-    borderRadius: 13,
-    paddingVertical: 11,
-    marginTop: 4,
-  },
-  doneLabel: { fontFamily: 'Inter_700Bold', fontSize: 13 },
+  day: { paddingVertical: 14 },
+  dayHead: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  dayDate: { width: 44, alignItems: 'center' },
+  rest: { borderTopWidth: 1, marginTop: 12, paddingTop: 12 },
+  session: { borderTopWidth: 1, marginTop: 12, paddingTop: 12 },
+  sessionRow: { flexDirection: 'row', alignItems: 'center', gap: 13 },
+  bar: { width: 3, alignSelf: 'stretch', borderRadius: 2, marginLeft: 20, marginRight: 8 },
+  expandRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 8 },
+  done: { textDecorationLine: 'line-through', opacity: 0.5 },
+  detail: { borderRadius: 16, padding: 14, marginTop: 12, gap: 4 },
+  blocks: { gap: 6, marginTop: 8 },
 });

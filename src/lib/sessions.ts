@@ -5,7 +5,7 @@ export type Pattern = 'upper' | 'lower' | 'full' | 'run' | 'hybrid' | 'speed' | 
 
 /**
  * A session the week wants, before it has a day and time.
- * Offsets are relative to the event day: -1 = the day before (MD-1), +1 = the day after.
+ * Offsets are relative to the event day: -1 = the day before, +1 = the day after.
  */
 export type SessionSpec = {
   key: string;
@@ -62,7 +62,7 @@ function hypertrophyWeek(profile: Profile): SessionSpec[] {
       legLoad: 0,
       priority: 3,
       blocks: [
-        'A1 Bench press 4×6–8 @ RPE 8',
+        'A1 Bench press 4×6–8 @ effort 8/10',
         'A2 Weighted pull-up 4×6–8',
         'B1 Incline DB press 3×10–12',
         'B2 Chest-supported row 3×10–12',
@@ -81,7 +81,7 @@ function hypertrophyWeek(profile: Profile): SessionSpec[] {
       legLoad: 1,
       priority: 3,
       blocks: [
-        'A Back squat 4×5–6 @ RPE 8',
+        'A Back squat 4×5–6 @ effort 8/10',
         'B Romanian deadlift 3×8',
         'C Rear-foot split squat 3×10/leg',
         'D Nordic curl 3×5',
@@ -119,7 +119,7 @@ function hypertrophyWeek(profile: Profile): SessionSpec[] {
       legLoad: 1,
       priority: 2.8,
       blocks: [
-        'A Trap-bar deadlift 4×5 @ RPE 8',
+        'A Trap-bar deadlift 4×5 @ effort 8/10',
         'B Barbell hip thrust 3×8–10',
         'C Walking lunge 3×12/leg',
         'D Leg curl 3×12',
@@ -214,7 +214,7 @@ function matchWeek(profile: Profile): SessionSpec[] {
       priority: 3,
       blocks: [
         'Prime: 3×3 box jumps',
-        'A Trap-bar deadlift 3×4 @ RPE 7–8, fast concentric',
+        'A Trap-bar deadlift 3×4 @ effort 7–8/10, fast concentric',
         'B Rear-foot split squat 3×6/leg',
         'C Nordic curl 3×4',
         'D Copenhagen plank 2×20 s/side',
@@ -225,7 +225,7 @@ function matchWeek(profile: Profile): SessionSpec[] {
       dayReason: (o) =>
         o < 0
           ? `${hoursOut(o)} before kick-off — heavy legs are recovered by game time`
-          : `MD+${o}: the match is flushed, heavy work won't dent the next one`,
+          : `${o} days after the match: legs have recovered, so heavy work won't dent the next one`,
     }),
     spec({
       key: 'upper-strength',
@@ -238,7 +238,7 @@ function matchWeek(profile: Profile): SessionSpec[] {
       legLoad: 0.1,
       priority: 2.6,
       blocks: [
-        'A1 Bench press 4×5 @ RPE 8',
+        'A1 Bench press 4×5 @ effort 8/10',
         'A2 Weighted pull-up 4×5',
         'B1 Half-kneeling landmine press 3×8/side',
         'B2 Chest-supported row 3×10',
@@ -248,9 +248,9 @@ function matchWeek(profile: Profile): SessionSpec[] {
       discouraged: [-1, 1],
       dayReason: (o) =>
         o <= -2
-          ? `MD${o}: upper work doesn't touch the legs you need on match day`
+          ? `${-o} days before the match: upper-body work leaves your legs fresh`
           : o >= 2
-            ? `MD+${o}: upper volume while the legs finish recovering`
+            ? `${o} days after the match: upper-body work while your legs finish recovering`
             : null,
     }),
     spec({
@@ -277,8 +277,8 @@ function matchWeek(profile: Profile): SessionSpec[] {
       rehearse: true,
       dayReason: (o) =>
         o === -1
-          ? 'MD-1: primes speed and the nervous system without adding fatigue'
-          : 'MD-2: sharpens speed with two full nights of sleep before kick-off',
+          ? 'The day before the match: short and sharp, so you feel quick without getting tired'
+          : 'Two days before the match: sharpens speed with two full nights of sleep to recover',
     }),
     spec({
       key: 'recovery',
@@ -299,7 +299,7 @@ function matchWeek(profile: Profile): SessionSpec[] {
       allowed: (o) => o === 1 || o === 2,
       preferred: [1],
       needs: 'needs an open day 1–2 days after the match',
-      dayReason: (o) => (o === 1 ? 'MD+1: move blood, not load' : 'MD+2: flush before loading again'),
+      dayReason: (o) => (o === 1 ? 'The day after the match: get the blood moving, no load' : 'Two days after the match: flush the legs before loading again'),
     }),
     spec({
       key: 'conditioning',
@@ -361,7 +361,7 @@ function tenKWeek(profile: Profile): SessionSpec[] {
       pattern: 'lower',
       legLoad: 0.7,
       priority: 2.4,
-      blocks: ['A Trap-bar deadlift 3×3 @ RPE 6–7', 'B Step-up 3×6/leg', 'C Soleus raise 3×12', 'D Copenhagen 2×20 s/side'],
+      blocks: ['A Trap-bar deadlift 3×3 @ effort 6–7/10', 'B Step-up 3×6/leg', 'C Soleus raise 3×12', 'D Copenhagen 2×20 s/side'],
       allowed: (o) => o <= -4,
       preferred: [-6, -5],
       needs: 'needs an open day 4+ days before the race',
@@ -542,13 +542,13 @@ function deloadWeek(profile: Profile): SessionSpec[] {
       key: 'upper-deload',
       type: 'Lift',
       title: 'Upper · deload',
-      focus: 'Same lifts, half the sets, RPE 6',
+      focus: 'Same lifts, half the sets, effort 6/10',
       minutes: short,
       intensity: 5,
       pattern: 'upper',
       legLoad: 0,
       priority: 3,
-      blocks: ['Main press + pull: 2×5 @ RPE 6', 'One accessory pair 2×10', 'Mobility 8 min'],
+      blocks: ['Main press + pull: 2×5 @ effort 6/10', 'One accessory pair 2×10', 'Mobility 8 min'],
     }),
     spec({
       key: 'lower-deload',
@@ -560,7 +560,7 @@ function deloadWeek(profile: Profile): SessionSpec[] {
       pattern: 'lower',
       legLoad: 0.5,
       priority: 3,
-      blocks: ['Squat or trap-bar 2×5 @ RPE 6', 'Split squat 2×8/leg', 'Nordic 2×3', 'Hips + ankles 8 min'],
+      blocks: ['Squat or trap-bar 2×5 @ effort 6/10', 'Split squat 2×8/leg', 'Nordic 2×3', 'Hips + ankles 8 min'],
     }),
     spec({
       key: 'zone2',

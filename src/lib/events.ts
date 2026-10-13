@@ -43,7 +43,7 @@ export const EVENT_PRESETS: Record<EventKind, EventPreset> = {
     kind: 'weekend-match',
     label: 'Weekend match',
     short: 'League match',
-    blurb: 'Strength early in the week, speed primer MD-1',
+    blurb: 'Strength early in the week, speed work the day before',
     day: 'Sat',
     time: hm(15, 0),
     minutes: 105,

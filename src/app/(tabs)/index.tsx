@@ -1,1240 +1,394 @@
 import { Feather } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import React, { useMemo, useState } from 'react';
-import {
-  Alert,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
-import * as Haptics from 'expo-haptics';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { useColors } from '@/hooks/useColors';
+import { EffortSheet, KIND_META, TaskRow } from '@/components/log';
+import {
+  Avatar,
+  Bullet,
+  Button,
+  Card,
+  Eyebrow,
+  Hint,
+  ProgressBar,
+  ProgressRing,
+  Screen,
+  SectionTitle,
+  shared,
+} from '@/components/ui';
+import { type as t } from '@/constants/type';
 import { usePlanner } from '@/context/PlannerContext';
-import type { PlanSession } from '@/context/PlannerContext';
-import {
-  formatClock,
-  formatLongDate,
-  formatMinutesPadded,
-  fromISODate,
-  isoWeek,
-  monthShort,
-} from '@/lib/time';
-import type { MicroItem, PlanDay } from '@/lib/types';
+import { useColors } from '@/hooks/useColors';
+import { dayTasks, eatenMacros, FEELS, progress, readiness, type DayTask } from '@/lib/logbook';
+import { LOAD_LABELS } from '@/lib/nutrition';
+import { DAY_NAMES, formatClock, fromISODate, monthShort } from '@/lib/time';
+import type { DayKey, PlanDay } from '@/lib/types';
 
-type Tone = 'lime' | 'apricot' | 'sky';
-
-type TimelineItem = {
-  key: string;
-  start: number;
-  time: string;
-  type: string;
-  title: string;
-  detail: string;
-  duration: string;
-  tone: Tone;
-  sessionId?: string;
+const greeting = (date: Date) => {
+  const hour = date.getHours();
+  return hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
 };
 
-type FeatherName = React.ComponentProps<typeof Feather>['name'];
-
-const toneColors = (
-  tone: Tone,
-  colors: ReturnType<typeof useColors>,
-) => {
-  if (tone === 'lime') return colors.primary;
-  if (tone === 'apricot') return colors.accent;
-  return colors.sky;
-};
-
-const sessionTone = (session: PlanSession): Tone =>
-  session.color === 'orange'
-    ? 'apricot'
-    : session.color === 'blue'
-      ? 'sky'
-      : 'lime';
-
-const dayTone = (day: PlanDay): Tone =>
-  day.color === 'orange' ? 'apricot' : day.color === 'blue' ? 'sky' : 'lime';
-
-const MICRO: Record<MicroItem['kind'], { type: string; tone: Tone }> = {
-  mobility: { type: 'RESET', tone: 'sky' },
-  fuel: { type: 'FUEL', tone: 'apricot' },
-  downshift: { type: 'RECOVERY', tone: 'apricot' },
-  winddown: { type: 'SLEEP', tone: 'sky' },
-};
-
-function makeTimeline(day: PlanDay | undefined): TimelineItem[] {
-  if (!day) return [];
-
-  const sessions: TimelineItem[] = day.sessions.map((session) => ({
-    key: session.id,
-    start: session.start,
-    time: session.time,
-    type: session.type.toUpperCase(),
-    title: session.title,
-    detail: session.focus,
-    duration: session.duration,
-    tone: sessionTone(session),
-    sessionId: session.id,
-  }));
-
-  const rest: TimelineItem[] =
-    sessions.length === 0
-      ? [
-          {
-            key: `${day.day}:rest`,
-            start: -1,
-            time: 'Anytime',
-            type: 'RESET',
-            title: 'Full rest + prep',
-            detail: 'No training today · plan and prep the next block',
-            duration: '15 min',
-            tone: 'sky',
-          },
-        ]
-      : [];
-
-  const micro: TimelineItem[] = day.micro.map((item) => ({
-    key: item.key,
-    start: item.start,
-    time: formatClock(item.start),
-    type: MICRO[item.kind].type,
-    title: item.title,
-    detail: item.detail,
-    duration: formatMinutesPadded(item.minutes),
-    tone: MICRO[item.kind].tone,
-  }));
-
-  return [...rest, ...sessions, ...micro].sort((a, b) => a.start - b.start);
-}
-
-const windowIcon = (start: number): FeatherName =>
-  start < 0 ? 'coffee' : start < 12 * 60 ? 'sunrise' : start < 17 * 60 ? 'sun' : 'sunset';
+const loadWords = (score: number) =>
+  score < 4 ? 'A light week' : score < 6.5 ? 'A moderate week' : score < 8.5 ? 'A big week — sleep is the priority' : 'A very big week — protect every hour of sleep';
 
 export default function TodayScreen() {
   const colors = useColors();
-  const insets = useSafeAreaInsets();
   const router = useRouter();
-
   const {
     profile,
-    sessions,
     plan,
+    fuel,
+    week,
+    sessions,
     today,
     todayKey,
+    todayISO,
     weekEvent,
     toggleSession,
-    cycleEvent,
-    isDone,
+    rateSession,
     toggleDone,
+    toggleMeal,
+    checkIn,
+    hintSeen,
+    dismissHint,
   } = usePlanner();
 
-  const [selectedDay, setSelectedDay] = useState(todayKey.toUpperCase());
-  const [showRecovery, setShowRecovery] = useState(false);
+  const [selected, setSelected] = useState<DayKey>(todayKey);
+  const [rating, setRating] = useState<DayTask | null>(null);
 
-  const week = useMemo(
-    () =>
-      plan.days.map((day) => ({
-        day: day.day.toUpperCase(),
-        date: String(fromISODate(day.date).getDate()),
-        label: day.day === todayKey ? 'Today' : day.label,
-        tone: dayTone(day),
-      })),
-    [plan.days, todayKey],
-  );
+  const day = plan.days.find((d) => d.day === selected) ?? plan.days[0];
+  const fuelDay = fuel.days.find((d) => d.day === selected);
+  const tasks = useMemo(() => dayTasks(day, fuelDay, week), [day, fuelDay, week]);
+  const dayProgress = progress(tasks);
+  const isToday = selected === todayKey;
+  const date = fromISODate(day.date);
 
-  const selectedPlan = plan.days.find(
-    (day) => day.day.toUpperCase() === selectedDay,
-  );
-  const selectedDate = selectedPlan ? fromISODate(selectedPlan.date) : today;
-
-  const timeline = useMemo(
-    () => makeTimeline(selectedPlan),
-    [selectedPlan],
-  );
-
-  const isItemDone = (item: TimelineItem) =>
-    item.sessionId
-      ? Boolean(
-          sessions.find((session) => session.id === item.sessionId)
-            ?.completed,
-        )
-      : isDone(item.key);
-
+  const nowMinutes = today.getHours() * 60 + today.getMinutes();
   const next =
-    timeline.find((item) => !isItemDone(item)) ?? timeline[0];
+    (isToday ? tasks.find((task) => !task.done && task.start + Math.max(task.minutes, 30) + 60 >= nowMinutes) : null) ??
+    tasks.find((task) => !task.done);
 
-  const completed = sessions.filter(
-    (session) => session.completed,
-  ).length;
-
-  const training = sessions.filter((session) => !session.isEvent);
-  const avgMinutes = training.length
-    ? Math.round(
-        training.reduce((sum, session) => sum + session.minutes, 0) /
-          training.length,
-      )
-    : 0;
-  const recoveryMinutes = selectedPlan
-    ? selectedPlan.micro
-        .filter((item) => item.kind === 'mobility' || item.kind === 'downshift')
-        .reduce((sum, item) => sum + item.minutes, 0) +
-      selectedPlan.sessions
-        .filter((session) => session.type === 'Reset')
-        .reduce((sum, session) => sum + session.minutes, 0)
-    : 0;
-
-  const { load } = plan;
-  const loadTotal = load.strength + load.conditioning + load.recovery || 1;
-  const fill = load.score / 10;
-  const segment = (value: number) =>
-    `${Math.round((value / loadTotal) * fill * 100)}%` as const;
-
-  const topPad =
-    insets.top + (Platform.OS === 'web' ? 67 : 16);
-
-  const bottomPad =
-    insets.bottom + (Platform.OS === 'web' ? 34 : 98);
-
-  const toggleTimeline = (item: TimelineItem) => {
-    if (item.sessionId) {
-      toggleSession(item.sessionId);
+  const toggle = (task: DayTask) => {
+    if (task.kind === 'session' || task.kind === 'event') {
+      toggleSession(task.sessionId!);
+      // Logging a session asks how hard it felt; undoing doesn't.
+      if (!task.done) setRating(task);
+    } else if (task.kind === 'meal') {
+      toggleMeal(task.key);
     } else {
-      toggleDone(item.key);
+      toggleDone(task.key);
     }
-
-    Haptics.impactAsync(
-      Haptics.ImpactFeedbackStyle.Light,
-    );
   };
 
-  const changeEvent = () => {
-    cycleEvent();
-
-    Haptics.notificationAsync(
-      Haptics.NotificationFeedbackType.Success,
-    );
-
-    Alert.alert(
-      'Week adjusted',
-      'Training load and fueling emphasis now follow the new event.',
-    );
-  };
+  const todaysCheckIn = checkIn(todayISO);
+  const ready = readiness(todaysCheckIn);
+  const eaten = fuelDay ? eatenMacros(fuelDay, week) : null;
+  const mealsLogged = fuelDay ? fuelDay.meals.filter((m) => week.meals.includes(m.id)).length : 0;
+  const training = sessions.filter((s) => !s.isEvent);
+  const trainingDone = training.filter((s) => week.sessions[s.id]).length;
+  const firstName = profile.name && profile.name !== 'Athlete' ? `, ${profile.name.split(' ')[0]}` : '';
 
   return (
-    <ScrollView
-      style={[
-        styles.screen,
-        { backgroundColor: colors.background },
-      ]}
-      contentContainerStyle={{
-        paddingTop: topPad,
-        paddingBottom: bottomPad,
-      }}
-      showsVerticalScrollIndicator={false}
-    >
+    <Screen testID="today-screen">
       <View style={styles.header}>
-        <View style={styles.brandRow}>
-          <View
-            style={[
-              styles.brandMark,
-              { backgroundColor: colors.primary },
-            ]}
-          >
-            <Feather
-              name="activity"
-              size={20}
-              color={colors.primaryForeground}
-            />
-          </View>
-
-          <View>
-            <Text
-              style={[
-                styles.eyebrow,
-                { color: colors.primary },
-              ]}
-            >
-              PERFORM / WEEK {isoWeek(today).week}
-            </Text>
-
-            <Text
-              style={[
-                styles.headerDate,
-                { color: colors.foreground },
-              ]}
-            >
-              {formatLongDate(today)}
-            </Text>
-          </View>
-        </View>
-
-        <Pressable
-          testID="profile-button"
-          onPress={() => router.push('/profile')}
-          style={({ pressed }) => [
-            styles.profileButton,
-            { backgroundColor: colors.secondary },
-            pressed && styles.pressed,
-          ]}
-        >
-          <Text
-            style={[
-              styles.profileLetter,
-              { color: colors.primary },
-            ]}
-          >
-            {profile.name.charAt(0).toUpperCase() || 'A'}
-          </Text>
-        </Pressable>
-      </View>
-
-      <View style={styles.weekIntro}>
-        <View>
-          <Text
-            style={[
-              styles.eyebrow,
-              { color: colors.mutedForeground },
-            ]}
-          >
-            THE WEEK, IN ORDER
-          </Text>
-
-          <Text
-            style={[
-              styles.weekPrompt,
-              { color: colors.foreground },
-            ]}
-          >
-            Choose a day to inspect
+        <View style={styles.flex}>
+          <Eyebrow color={colors.accent}>
+            {DAY_NAMES[todayKey].toUpperCase()} · {monthShort(today).toUpperCase()} {today.getDate()}
+          </Eyebrow>
+          <Text style={[t.title, { color: colors.foreground, marginTop: 6 }]}>
+            {greeting(today)}
+            {firstName}
           </Text>
         </View>
-
-        <Text
-          style={[
-            styles.month,
-            { color: colors.mutedForeground },
-          ]}
-        >
-          {monthShort(selectedDate).toUpperCase()} {selectedDate.getFullYear()}
-        </Text>
+        <Avatar testID="profile-button" name={profile.name} onPress={() => router.navigate('/you')} />
       </View>
 
-      <View
-        style={[
-          styles.weekRail,
-          {
-            backgroundColor: colors.card,
-            borderColor: colors.border,
-          },
-        ]}
-      >
-        {week.map((item) => {
-          const selected = selectedDay === item.day;
-          const accent = toneColors(item.tone, colors);
-
-          return (
-            <Pressable
-              testID={`focus-day-${item.day}`}
-              key={item.day}
-              accessibilityLabel={`${item.day} ${item.date}, ${item.label}`}
-              onPress={() => {
-                setSelectedDay(item.day);
-                Haptics.selectionAsync();
-              }}
-              style={({ pressed }) => [
-                styles.dayButton,
-                {
-                  backgroundColor: selected
-                    ? colors.primary
-                    : 'transparent',
-                },
-                pressed && styles.pressed,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.dayLabel,
-                  {
-                    color: selected
-                      ? colors.primaryForeground
-                      : colors.mutedForeground,
-                  },
-                ]}
-              >
-                {item.day}
-              </Text>
-
-              <Text
-                style={[
-                  styles.dayNumber,
-                  {
-                    color: selected
-                      ? colors.primaryForeground
-                      : colors.foreground,
-                  },
-                ]}
-              >
-                {item.date}
-              </Text>
-
-              <View
-                style={[
-                  styles.dayDot,
-                  {
-                    backgroundColor: selected
-                      ? colors.primaryForeground
-                      : accent,
-                  },
-                ]}
-              />
-            </Pressable>
-          );
-        })}
-      </View>
-
-      {next ? (
-        <LinearGradient
-          colors={[colors.secondary, colors.card]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.nextCard}
-        >
-          <View style={styles.nextTop}>
-            <View style={styles.nextCopy}>
-              <Text
-                style={[
-                  styles.eyebrow,
-                  { color: colors.primary },
-                ]}
-              >
-                NEXT WINDOW
-              </Text>
-
-              <Text
-                style={[
-                  styles.nextTime,
-                  { color: colors.foreground },
-                ]}
-              >
-                {next.time}
-              </Text>
-
-              <Text
-                style={[
-                  styles.nextMeta,
-                  { color: '#B8C8C0' },
-                ]}
-              >
-                {next.duration} · {next.title}
-              </Text>
-            </View>
-
-            <View
-              style={[
-                styles.nextIcon,
-                { backgroundColor: colors.primary },
-              ]}
-            >
-              <Feather
-                name={windowIcon(next.start)}
-                size={24}
-                color={colors.primaryForeground}
-              />
-            </View>
-          </View>
-
-          <View
-            style={[
-              styles.divider,
-              { backgroundColor: colors.border },
-            ]}
-          />
-
-          <Pressable
-            testID="wind-down"
-            onPress={() => router.push('/plan')}
-            style={({ pressed }) => [
-              styles.windDown,
-              pressed && styles.pressed,
-            ]}
-          >
-            <Feather
-              name="moon"
-              size={15}
-              color={colors.accent}
-            />
-
-            <Text
-              style={[
-                styles.windDownText,
-                { color: colors.secondaryForeground },
-              ]}
-            >
-              Protecting your {formatClock(selectedPlan?.lightsOut ? selectedPlan.lightsOut - 30 : plan.sleep.windDown)} wind-down
-            </Text>
-
-            <Feather
-              name="arrow-right"
-              size={15}
-              color={colors.primary}
-            />
-          </Pressable>
-        </LinearGradient>
+      {!hintSeen('today-intro') ? (
+        <Hint testID="today-hint" title="How Perform works" icon="compass" onDismiss={() => dismissHint('today-intro')}>
+          <Bullet>Your day is listed below in time order. Tap the circle on the right to check something off.</Bullet>
+          <Bullet>Tap the + Log button any time to log a session and how hard it felt, a meal, or how you slept.</Bullet>
+          <Bullet>Week changed? Update it under You, and the plan and meals rebuild instantly.</Bullet>
+        </Hint>
       ) : null}
 
-      <View style={styles.motionHeader}>
-        <View>
-          <Text
-            style={[
-              styles.eyebrow,
-              { color: colors.mutedForeground },
-            ]}
-          >
-            {selectedDay} / {monthShort(selectedDate).toUpperCase()}{' '}
-            {selectedDate.getDate()}
-          </Text>
+      <WeekRail days={plan.days} selected={selected} todayKey={todayKey} onSelect={setSelected} />
 
-          <Text
-            style={[
-              styles.motionTitle,
-              { color: colors.foreground },
-            ]}
-          >
-            Your day in motion
-          </Text>
-        </View>
-
+      {isToday && !ready ? (
         <Pressable
-          testID="recovery-toggle"
-          onPress={() => {
-            setShowRecovery((current) => !current);
-            Haptics.selectionAsync();
-          }}
-          style={({ pressed }) => [
-            styles.iconButton,
-            {
-              borderColor: showRecovery
-                ? colors.accent
-                : colors.border,
-            },
-            pressed && styles.pressed,
-          ]}
+          testID="checkin-prompt"
+          accessibilityRole="button"
+          onPress={() => router.push('/log?focus=checkin')}
+          style={({ pressed }) => [styles.checkin, { backgroundColor: colors.card, borderColor: colors.border }, pressed && shared.pressed]}
         >
-          <Feather
-            name={showRecovery ? 'wind' : 'star'}
-            size={15}
-            color={
-              showRecovery
-                ? colors.accent
-                : colors.mutedForeground
-            }
-          />
+          <View style={[styles.checkinIcon, { backgroundColor: colors.skySoft }]}>
+            <Feather name="moon" size={18} color={colors.sky} />
+          </View>
+          <View style={styles.flex}>
+            <Text style={[t.bodyStrong, { color: colors.foreground }]}>How did you sleep?</Text>
+            <Text style={[t.caption, { color: colors.mutedForeground, marginTop: 2 }]}>10-second check-in · tells you whether to push or hold back</Text>
+          </View>
+          <Feather name="chevron-right" size={18} color={colors.mutedForeground} />
         </Pressable>
-      </View>
+      ) : null}
 
-      <View style={styles.timeline}>
+      {isToday && ready && todaysCheckIn ? (
         <View
           style={[
-            styles.timelineLine,
-            { backgroundColor: colors.border },
+            styles.checkin,
+            {
+              backgroundColor: ready.tone === 'easy' ? colors.accentSoft : colors.primarySoft,
+              borderColor: ready.tone === 'easy' ? 'rgba(229,195,140,0.3)' : 'rgba(212,241,113,0.25)',
+            },
           ]}
-        />
+        >
+          <View style={[styles.checkinIcon, { backgroundColor: colors.secondary }]}>
+            <Feather name={ready.tone === 'easy' ? 'battery' : 'battery-charging'} size={18} color={ready.tone === 'easy' ? colors.accent : colors.primary} />
+          </View>
+          <View style={styles.flex}>
+            <Text style={[t.bodyStrong, { color: colors.foreground }]}>{ready.label}</Text>
+            <Text style={[t.caption, { color: colors.secondaryForeground, marginTop: 2 }]}>
+              {todaysCheckIn.sleepHours !== undefined ? `Slept ${todaysCheckIn.sleepHours} h` : ''}
+              {todaysCheckIn.feel ? ` · feeling ${FEELS[todaysCheckIn.feel - 1].label.toLowerCase()}` : ''}. {ready.advice}
+            </Text>
+          </View>
+        </View>
+      ) : null}
 
-        {timeline.map((item) => {
-          const accent = toneColors(item.tone, colors);
-          const done = isItemDone(item);
-
-          return (
-            <Pressable
-              testID={`timeline-${item.key}`}
-              key={item.key}
-              onPress={() => toggleTimeline(item)}
-              style={({ pressed }) => [
-                styles.timelineItem,
-                {
-                  backgroundColor: colors.card,
-                  borderColor: done
-                    ? colors.border
-                    : accent,
-                },
-                pressed && styles.pressed,
-              ]}
-            >
-              <View
-                style={[
-                  styles.timelineDot,
-                  {
-                    backgroundColor: done
-                      ? colors.primary
-                      : accent,
-                    borderColor: colors.background,
-                  },
-                ]}
-              >
-                {done ? (
-                  <Feather
-                    name="check"
-                    size={12}
-                    color={colors.primaryForeground}
-                  />
-                ) : (
-                  <View
-                    style={[
-                      styles.dotCore,
-                      {
-                        backgroundColor:
-                          colors.primaryForeground,
-                      },
-                    ]}
-                  />
-                )}
+      <LinearGradient
+        colors={['#1C201D', colors.card]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={[styles.hero, { borderColor: colors.borderStrong }]}
+      >
+        {next ? (
+          <>
+            <View style={styles.heroTop}>
+              <Eyebrow color={colors.primary}>
+                {isToday ? 'UP NEXT' : `${DAY_NAMES[selected].toUpperCase()}`} · {next.time}
+              </Eyebrow>
+              <View style={[styles.kindPill, { borderColor: colors.borderStrong }]}>
+                <Feather name={KIND_META[next.kind].icon} size={11} color={colors.secondaryForeground} />
+                <Text style={[t.micro, { color: colors.secondaryForeground }]}>{KIND_META[next.kind].label}</Text>
               </View>
-
-              <View style={styles.timelineCopy}>
-                <View style={styles.timelineMeta}>
-                  <Text
-                    style={[
-                      styles.timelineType,
-                      { color: accent },
-                    ]}
-                  >
-                    {item.type}
-                  </Text>
-
-                  <Text
-                    style={[
-                      styles.timelineTime,
-                      { color: colors.mutedForeground },
-                    ]}
-                  >
-                    {item.time} · {item.duration}
-                  </Text>
-                </View>
-
-                <Text
-                  style={[
-                    styles.timelineTitle,
-                    { color: colors.foreground },
-                    done && styles.doneText,
-                  ]}
-                >
-                  {item.title}
-                </Text>
-
-                <Text
-                  style={[
-                    styles.timelineDetail,
-                    { color: colors.mutedForeground },
-                  ]}
-                >
-                  {item.detail}
-                </Text>
-              </View>
-
-              <Feather
-                name="chevron-right"
-                size={15}
-                color={colors.mutedForeground}
+            </View>
+            <Text style={[t.hero, styles.heroTitle, { color: colors.foreground }]} numberOfLines={2}>
+              {next.title}
+            </Text>
+            <Text style={[t.body, { color: colors.mutedForeground }]} numberOfLines={2}>
+              {next.kind === 'session' || next.kind === 'event'
+                ? `${next.minutes} min · ${next.detail}`
+                : next.detail}
+            </Text>
+            <View style={styles.heroActions}>
+              <Button
+                testID="hero-done"
+                label={next.kind === 'meal' ? 'I ate this' : next.kind === 'habit' ? 'Done' : 'Log session'}
+                icon="check"
+                onPress={() => toggle(next)}
+                style={styles.flex}
               />
-            </Pressable>
-          );
-        })}
-      </View>
-
-      <View style={styles.metricRow}>
-        <View
-          style={[
-            styles.loadCard,
-            {
-              backgroundColor: colors.card,
-              borderColor: colors.border,
-            },
-          ]}
-        >
-          <View style={styles.metricHead}>
-            <Feather
-              name="activity"
-              size={15}
-              color={colors.primary}
-            />
-
-            <Text
-              style={[
-                styles.metricLabel,
-                { color: colors.mutedForeground },
-              ]}
-            >
-              LOAD
+              {next.kind !== 'habit' ? (
+                <Button
+                  variant="ghost"
+                  label="Details"
+                  onPress={() => router.navigate(next.kind === 'meal' ? '/fuel' : '/plan')}
+                  style={styles.detailsButton}
+                />
+              ) : null}
+            </View>
+          </>
+        ) : (
+          <View style={styles.allDone}>
+            <Feather name="check-circle" size={26} color={colors.primary} />
+            <Text style={[t.heading, { color: colors.foreground }]}>Everything’s logged.</Text>
+            <Text style={[t.body, { color: colors.mutedForeground, textAlign: 'center' }]}>
+              Lights out by {formatClock(day.lightsOut)}. Tomorrow’s plan is ready.
             </Text>
           </View>
+        )}
+      </LinearGradient>
 
-          <View style={styles.loadValueRow}>
-            <Text
-              style={[
-                styles.loadValue,
-                { color: colors.foreground },
-              ]}
-            >
-              {load.score.toFixed(1)}
-            </Text>
-
-            <Text
-              style={[
-                styles.loadState,
-                { color: load.score >= 8.5 ? colors.accent : colors.success },
-              ]}
-            >
-              {load.label}
-            </Text>
-          </View>
-
-          <View
-            style={[
-              styles.loadTrack,
-              { backgroundColor: colors.secondary },
-            ]}
-          >
-            <View
-              style={[
-                styles.loadSeg,
-                {
-                  backgroundColor: colors.primary,
-                  width: segment(load.strength),
-                },
-              ]}
-            />
-
-            <View
-              style={[
-                styles.loadSeg,
-                {
-                  backgroundColor: colors.accent,
-                  width: segment(load.conditioning),
-                },
-              ]}
-            />
-
-            <View
-              style={[
-                styles.loadSeg,
-                {
-                  backgroundColor: colors.sky,
-                  width: segment(load.recovery),
-                },
-              ]}
-            />
-          </View>
-
-          <Text
-            style={[
-              styles.metricFoot,
-              { color: colors.mutedForeground },
-            ]}
-          >
-            {completed} of {sessions.length} sessions complete
+      <SectionTitle
+        eyebrow={`${DAY_NAMES[selected].toUpperCase()} · ${monthShort(date).toUpperCase()} ${date.getDate()}`}
+        title={isToday ? 'Your day' : `${DAY_NAMES[selected]}`}
+        action="Log more"
+        onAction={() => router.push(`/log?day=${selected}`)}
+      />
+      <Card style={styles.listCard}>
+        <View style={styles.progressHead}>
+          <Text style={[t.caption, { color: colors.secondaryForeground }]}>
+            {dayProgress.done} of {dayProgress.total} done
           </Text>
+          <Text style={[t.caption, { color: colors.mutedForeground }]}>{LOAD_LABELS[day.load]}</Text>
         </View>
+        <ProgressBar value={dayProgress.ratio} height={4} />
+        <View style={styles.list}>
+          {tasks.map((task, index) => (
+            <TaskRow key={task.key} task={task} first={index === 0} onToggle={() => toggle(task)} />
+          ))}
+        </View>
+      </Card>
+
+      <View style={styles.statRow}>
+        <Pressable
+          testID="fuel-snapshot"
+          accessibilityRole="button"
+          onPress={() => router.navigate('/fuel')}
+          style={({ pressed }) => [styles.stat, { backgroundColor: colors.card, borderColor: colors.border }, pressed && shared.pressed]}
+        >
+          <Eyebrow>FUEL</Eyebrow>
+          <View style={styles.statBody}>
+            <ProgressRing value={eaten && fuelDay ? eaten.kcal / fuelDay.actual.kcal : 0} size={58} stroke={5} color={colors.accent}>
+              <Text style={[t.label, { color: colors.foreground }]}>{mealsLogged}/{fuelDay?.meals.length ?? 0}</Text>
+            </ProgressRing>
+            <View style={styles.flex}>
+              <Text style={[t.subheading, { color: colors.foreground }]}>{Math.round(eaten?.kcal ?? 0).toLocaleString('en-US')}</Text>
+              <Text style={[t.micro, { color: colors.mutedForeground, marginTop: 2 }]}>
+                of {Math.round(fuelDay?.actual.kcal ?? 0).toLocaleString('en-US')} kcal
+              </Text>
+            </View>
+          </View>
+          <Text style={[t.micro, { color: colors.mutedForeground }]}>meals logged ›</Text>
+        </Pressable>
 
         <Pressable
-          testID="recovery-metric"
-          onPress={() =>
-            setShowRecovery((current) => !current)
-          }
-          style={({ pressed }) => [
-            styles.recoveryCard,
-            {
-              backgroundColor: colors.card,
-              borderColor: colors.border,
-            },
-            pressed && styles.pressed,
-          ]}
+          testID="week-snapshot"
+          accessibilityRole="button"
+          onPress={() => router.navigate('/plan')}
+          style={({ pressed }) => [styles.stat, { backgroundColor: colors.card, borderColor: colors.border }, pressed && shared.pressed]}
         >
-          <View style={styles.metricHead}>
-            <Feather
-              name="zap"
-              size={15}
-              color={colors.accent}
-            />
-
-            <Feather
-              name="star"
-              size={15}
-              color={colors.mutedForeground}
-            />
+          <Eyebrow>THIS WEEK</Eyebrow>
+          <View style={styles.statBody}>
+            <ProgressRing value={training.length ? trainingDone / training.length : 0} size={58} stroke={5}>
+              <Text style={[t.label, { color: colors.foreground }]}>{trainingDone}/{training.length}</Text>
+            </ProgressRing>
+            <View style={styles.flex}>
+              <Text style={[t.subheading, { color: colors.foreground }]}>{plan.load.score.toFixed(1)}</Text>
+              <Text style={[t.micro, { color: colors.mutedForeground, marginTop: 2 }]}>load / 10</Text>
+            </View>
           </View>
-
-          <View>
-            <Text
-              style={[
-                styles.recoveryValue,
-                { color: colors.foreground },
-              ]}
-            >
-              {showRecovery ? recoveryMinutes : avgMinutes}
-            </Text>
-
-            <Text
-              style={[
-                styles.metricFoot,
-                { color: colors.mutedForeground },
-              ]}
-            >
-              {showRecovery
-                ? 'recovery minutes'
-                : 'avg session minutes'}
-            </Text>
-          </View>
+          <Text style={[t.micro, { color: colors.mutedForeground }]}>sessions done ›</Text>
         </Pressable>
       </View>
+      <Text style={[t.caption, styles.loadNote, { color: colors.mutedForeground }]}>{loadWords(plan.load.score)}.</Text>
 
       <Pressable
         testID="event-card"
-        onPress={changeEvent}
-        onLongPress={() => router.push('/plan')}
-        style={({ pressed }) => [
-          styles.eventCard,
-          { backgroundColor: colors.secondary },
-          pressed && styles.pressed,
-        ]}
+        accessibilityRole="button"
+        accessibilityHint="Change what this week is built around"
+        onPress={() => router.push('/edit/event')}
+        style={({ pressed }) => [styles.event, { backgroundColor: colors.card, borderColor: colors.border }, pressed && shared.pressed]}
       >
-        <View
-          style={[
-            styles.eventIcon,
-            { backgroundColor: colors.accent },
-          ]}
-        >
-          <Feather
-            name="award"
-            size={17}
-            color={colors.accentForeground}
-          />
+        <View style={[styles.eventIcon, { backgroundColor: colors.accentSoft }]}>
+          <Feather name="award" size={18} color={colors.accent} />
         </View>
-
-        <View style={styles.eventCopy}>
-          <Text
-            style={[
-              styles.eventLabel,
-              { color: colors.mutedForeground },
-            ]}
-          >
-            {"WEEK'S MAIN EVENT"}
-          </Text>
-
-          <Text
-            style={[
-              styles.eventTitle,
-              { color: colors.foreground },
-            ]}
-          >
-            {weekEvent.title}
-          </Text>
+        <View style={styles.flex}>
+          <Eyebrow>THIS WEEK’S FOCUS</Eyebrow>
+          <Text style={[t.bodyStrong, { color: colors.foreground, marginTop: 4 }]}>{weekEvent.title}</Text>
         </View>
-
-        <Feather
-          name="chevron-right"
-          size={16}
-          color={colors.mutedForeground}
-        />
+        <Text style={[t.label, { color: colors.primary }]}>Change</Text>
       </Pressable>
-    </ScrollView>
+
+      <EffortSheet
+        visible={Boolean(rating)}
+        title={rating?.title ?? ''}
+        value={rating ? week.sessions[rating.sessionId!]?.effort : undefined}
+        onChange={(effort) => rating && rateSession(rating.sessionId!, effort)}
+        onClose={() => setRating(null)}
+      />
+    </Screen>
+  );
+}
+
+function WeekRail({
+  days,
+  selected,
+  todayKey,
+  onSelect,
+}: {
+  days: PlanDay[];
+  selected: DayKey;
+  todayKey: DayKey;
+  onSelect: (day: DayKey) => void;
+}) {
+  const colors = useColors();
+  return (
+    <View style={[styles.rail, { backgroundColor: colors.card, borderColor: colors.border }]}>
+      {days.map((d) => {
+        const active = d.day === selected;
+        const dot = d.color === 'orange' ? colors.accent : d.color === 'blue' ? colors.sky : colors.primary;
+        const training = d.sessions.length > 0;
+        return (
+          <Pressable
+            key={d.day}
+            testID={`focus-day-${d.day.toUpperCase()}`}
+            accessibilityRole="button"
+            accessibilityLabel={`${DAY_NAMES[d.day]}, ${d.label}`}
+            accessibilityState={{ selected: active }}
+            onPress={() => {
+              Haptics.selectionAsync().catch(() => undefined);
+              onSelect(d.day);
+            }}
+            style={({ pressed }) => [styles.railDay, { backgroundColor: active ? colors.foreground : 'transparent' }, pressed && shared.pressed]}
+          >
+            <Text style={[t.micro, { color: active ? colors.background : colors.mutedForeground, letterSpacing: 0.6 }]}>
+              {d.day === todayKey ? 'TODAY' : d.day.toUpperCase()}
+            </Text>
+            <Text style={[t.heading, { color: active ? colors.background : colors.foreground, marginTop: 2 }]}>
+              {fromISODate(d.date).getDate()}
+            </Text>
+            <View style={[styles.railDot, { backgroundColor: training ? dot : 'transparent', borderColor: training ? dot : colors.borderStrong }]} />
+          </Pressable>
+        );
+      })}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-  },
-
-  header: {
-    paddingHorizontal: 20,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 21,
-  },
-
-  brandRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 11,
-  },
-
-  brandMark: {
-    width: 40,
-    height: 40,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  eyebrow: {
-    fontFamily: 'Inter_700Bold',
-    fontSize: 10,
-    letterSpacing: 1.5,
-  },
-
-  headerDate: {
-    fontFamily: 'Inter_700Bold',
-    fontSize: 20,
-    letterSpacing: -0.7,
-    marginTop: 4,
-  },
-
-  profileButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  profileLetter: {
-    fontFamily: 'Inter_700Bold',
-    fontSize: 16,
-  },
-
-  weekIntro: {
-    paddingHorizontal: 20,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-end',
-    marginBottom: 11,
-  },
-
-  weekPrompt: {
-    fontFamily: 'Inter_700Bold',
-    fontSize: 14,
-    marginTop: 5,
-  },
-
-  month: {
-    fontFamily: 'Inter_500Medium',
-    fontSize: 11,
-  },
-
-  weekRail: {
+  flex: { flex: 1 },
+  header: { paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', gap: 14, marginBottom: 20 },
+  rail: { marginHorizontal: 20, borderRadius: 22, borderWidth: 1, padding: 6, flexDirection: 'row', gap: 2, marginBottom: 14 },
+  railDay: { flex: 1, borderRadius: 16, paddingVertical: 10, alignItems: 'center', minHeight: 72 },
+  railDot: { width: 6, height: 6, borderRadius: 3, borderWidth: 1, marginTop: 6 },
+  checkin: {
     marginHorizontal: 20,
-    borderRadius: 21,
-    borderWidth: 1,
-    padding: 7,
-    flexDirection: 'row',
-    gap: 3,
-    marginBottom: 19,
-  },
-
-  dayButton: {
-    flex: 1,
-    minWidth: 42,
-    borderRadius: 15,
-    paddingVertical: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  dayLabel: {
-    fontFamily: 'Inter_700Bold',
-    fontSize: 9,
-    letterSpacing: 0.5,
-  },
-
-  dayNumber: {
-    fontFamily: 'Inter_700Bold',
-    fontSize: 17,
-    marginTop: 6,
-  },
-
-  dayDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    marginTop: 8,
-  },
-
-  nextCard: {
-    marginHorizontal: 20,
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: '#30463A',
-    padding: 20,
-    marginBottom: 25,
-  },
-
-  nextTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-  },
-
-  nextCopy: {
-    maxWidth: '72%',
-  },
-
-  nextTime: {
-    fontFamily: 'Inter_700Bold',
-    fontSize: 38,
-    letterSpacing: -2,
-    marginTop: 10,
-  },
-
-  nextMeta: {
-    fontFamily: 'Inter_500Medium',
-    fontSize: 13,
-    marginTop: 7,
-  },
-
-  nextIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  divider: {
-    height: 1,
-    marginTop: 20,
-    marginBottom: 15,
-  },
-
-  windDown: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-
-  windDownText: {
-    fontFamily: 'Inter_500Medium',
-    fontSize: 12,
-    flex: 1,
-  },
-
-  motionHeader: {
-    paddingHorizontal: 20,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-end',
-    marginBottom: 13,
-  },
-
-  motionTitle: {
-    fontFamily: 'Inter_700Bold',
-    fontSize: 22,
-    letterSpacing: -0.6,
-    marginTop: 5,
-  },
-
-  iconButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  timeline: {
-    marginHorizontal: 20,
-    paddingLeft: 15,
-    position: 'relative',
-    gap: 8,
-  },
-
-  timelineLine: {
-    position: 'absolute',
-    width: 1,
-    left: 7,
-    top: 16,
-    bottom: 16,
-  },
-
-  timelineItem: {
-    borderRadius: 19,
-    borderWidth: 1,
-    padding: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    minHeight: 76,
-  },
-
-  timelineDot: {
-    width: 27,
-    height: 27,
-    borderRadius: 14,
-    borderWidth: 4,
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 2,
-  },
-
-  dotCore: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-
-  timelineCopy: {
-    flex: 1,
-  },
-
-  timelineMeta: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-
-  timelineType: {
-    fontFamily: 'Inter_700Bold',
-    fontSize: 9,
-    letterSpacing: 1.1,
-  },
-
-  timelineTime: {
-    fontFamily: 'Inter_500Medium',
-    fontSize: 10,
-  },
-
-  timelineTitle: {
-    fontFamily: 'Inter_700Bold',
-    fontSize: 15,
-    marginTop: 5,
-  },
-
-  timelineDetail: {
-    fontFamily: 'Inter_400Regular',
-    fontSize: 11,
-    marginTop: 4,
-  },
-
-  doneText: {
-    textDecorationLine: 'line-through',
-    opacity: 0.5,
-  },
-
-  metricRow: {
-    marginHorizontal: 20,
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 18,
-  },
-
-  loadCard: {
-    flex: 1.12,
+    marginBottom: 14,
     borderRadius: 20,
     borderWidth: 1,
-    padding: 15,
-  },
-
-  recoveryCard: {
-    flex: 0.88,
-    borderRadius: 20,
-    borderWidth: 1,
-    padding: 15,
-    justifyContent: 'space-between',
-  },
-
-  metricHead: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 8,
-  },
-
-  metricLabel: {
-    fontFamily: 'Inter_700Bold',
-    fontSize: 9,
-    letterSpacing: 1.1,
-    flex: 1,
-  },
-
-  loadValueRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: 7,
-    marginTop: 18,
-  },
-
-  loadValue: {
-    fontFamily: 'Inter_700Bold',
-    fontSize: 31,
-    letterSpacing: -1.5,
-  },
-
-  loadState: {
-    fontFamily: 'Inter_500Medium',
-    fontSize: 10,
-    marginBottom: 4,
-    flexShrink: 1,
-  },
-
-  loadTrack: {
-    height: 6,
-    borderRadius: 3,
-    overflow: 'hidden',
-    flexDirection: 'row',
-    gap: 2,
-    marginTop: 16,
-  },
-
-  loadSeg: {
-    height: 6,
-    borderRadius: 3,
-  },
-
-  metricFoot: {
-    fontFamily: 'Inter_400Regular',
-    fontSize: 10,
-    marginTop: 10,
-  },
-
-  recoveryValue: {
-    fontFamily: 'Inter_700Bold',
-    fontSize: 25,
-    marginTop: 28,
-  },
-
-  eventCard: {
-    marginHorizontal: 20,
-    borderRadius: 19,
     padding: 14,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 11,
-    marginTop: 13,
+    gap: 13,
   },
-
-  eventIcon: {
-    width: 37,
-    height: 37,
-    borderRadius: 12,
+  checkinIcon: { width: 40, height: 40, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
+  hero: { marginHorizontal: 20, borderRadius: 26, borderWidth: 1, padding: 22 },
+  heroTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  kindPill: { flexDirection: 'row', alignItems: 'center', gap: 5, borderWidth: 1, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 4 },
+  heroTitle: { marginTop: 12, marginBottom: 8 },
+  heroActions: { flexDirection: 'row', gap: 10, marginTop: 20 },
+  detailsButton: { paddingHorizontal: 22 },
+  allDone: { alignItems: 'center', gap: 8, paddingVertical: 10 },
+  listCard: { paddingTop: 14, paddingBottom: 4 },
+  progressHead: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 },
+  list: { marginTop: 6 },
+  statRow: { flexDirection: 'row', gap: 10, marginHorizontal: 20, marginTop: 14 },
+  stat: { flex: 1, borderRadius: 22, borderWidth: 1, padding: 15, gap: 12 },
+  statBody: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  loadNote: { marginHorizontal: 22, marginTop: 10 },
+  event: {
+    marginHorizontal: 20,
+    marginTop: 14,
+    borderRadius: 22,
+    borderWidth: 1,
+    padding: 15,
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 13,
   },
-
-  eventCopy: {
-    flex: 1,
-  },
-
-  eventLabel: {
-    fontFamily: 'Inter_700Bold',
-    fontSize: 9,
-    letterSpacing: 1.1,
-  },
-
-  eventTitle: {
-    fontFamily: 'Inter_700Bold',
-    fontSize: 14,
-    marginTop: 5,
-  },
-
-  pressed: {
-    opacity: 0.78,
-  },
+  eventIcon: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
 });

@@ -5,6 +5,7 @@ import {
   Inter_700Bold,
   useFonts,
 } from '@expo-google-fonts/inter';
+import { InstrumentSerif_400Regular, InstrumentSerif_400Regular_Italic } from '@expo-google-fonts/instrument-serif';
 import { DarkTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
@@ -30,12 +31,14 @@ const theme = {
 };
 
 function RootStack() {
-  const { ready } = usePlanner();
+  const { ready, onboarded } = usePlanner();
   const [fontsLoaded, fontError] = useFonts({
     Inter_400Regular,
     Inter_500Medium,
     Inter_600SemiBold,
     Inter_700Bold,
+    InstrumentSerif_400Regular,
+    InstrumentSerif_400Regular_Italic,
   });
   const loaded = ready && (fontsLoaded || Boolean(fontError));
 
@@ -47,8 +50,14 @@ function RootStack() {
 
   return (
     <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background } }}>
-      <Stack.Screen name="(tabs)" />
-      <Stack.Screen name="profile" options={{ presentation: 'modal' }} />
+      <Stack.Protected guard={onboarded}>
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="log" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="edit/[section]" options={{ presentation: 'modal' }} />
+      </Stack.Protected>
+      <Stack.Protected guard={!onboarded}>
+        <Stack.Screen name="onboarding" options={{ animation: 'fade' }} />
+      </Stack.Protected>
     </Stack>
   );
 }

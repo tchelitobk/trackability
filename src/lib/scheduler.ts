@@ -551,7 +551,7 @@ const LABELS: Record<PlanSession['type'], string> = {
   Lift: 'Lift',
   Run: 'Run',
   Hybrid: 'Hybrid',
-  Speed: 'Prime',
+  Speed: 'Speed',
   Reset: 'Reset',
   Match: 'Match',
   Race: 'Race',

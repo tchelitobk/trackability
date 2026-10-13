@@ -73,7 +73,7 @@ export function weekEmphasis(kind: EventKind): { headline: string; detail: strin
     case 'midweek-match':
     case 'weekend-match':
       return {
-        headline: 'Carb up MD-1, refuel after the whistle',
+        headline: 'Carb up the day before, refuel after the whistle',
         detail: 'Carbs climb to ~7 g/kg the day before and the day of the match; low fat and fiber pre-game.',
       };
     case '10k':
