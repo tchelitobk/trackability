@@ -7,13 +7,17 @@ import { EVENT_PRESETS, makeEvent, nextEventKind } from '@/lib/events';
 import {
   emptyWeek,
   migrateLogs,
+  removeCustomMeal,
   saveCheckIn as saveCheckInTo,
+  saveCustomMeal,
   setEffort,
   setSessionDone,
   toggleItem,
   toggleMeal as toggleMealIn,
   toggleShopping,
   type CheckIn,
+  type CustomMeal,
+  type SavedMeal,
   type WeekLog,
 } from '@/lib/logbook';
 import { buildWeekFuel, type WeekFuel } from '@/lib/mealPlanner';
@@ -32,6 +36,8 @@ type Stored = {
   /** Tips the athlete has dismissed. */
   hints: string[];
   logs: Record<string, WeekLog>;
+  /** Favourite own meals for one-tap re-adding. */
+  myMeals: SavedMeal[];
 };
 
 type PlannerContextValue = {
@@ -62,6 +68,11 @@ type PlannerContextValue = {
   toggleBought: (food: string) => void;
   checkIn: (date: string) => CheckIn | undefined;
   saveCheckIn: (date: string, patch: Omit<CheckIn, 'at'>) => void;
+  customMeals: (date: string) => CustomMeal[];
+  saveMeal: (date: string, meal: CustomMeal, remember: boolean) => void;
+  deleteMeal: (date: string, id: string) => void;
+  myMeals: SavedMeal[];
+  forgetMeal: (id: string) => void;
   hintSeen: (id: string) => boolean;
   dismissHint: (id: string) => void;
   resetHints: () => void;
@@ -82,6 +93,7 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
     onboarded: false,
     hints: [],
     logs: {},
+    myMeals: [],
   });
   const loaded = useRef(false);
 
@@ -101,6 +113,7 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
           onboarded: saved.onboarded ?? Boolean(saved.profile),
           hints: saved.hints ?? [],
           logs: migrateLogs(saved),
+          myMeals: saved.myMeals ?? [],
         }));
       })
       .catch(() => undefined)
@@ -183,6 +196,26 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
     [updateWeek],
   );
 
+  const saveMeal = useCallback(
+    (date: string, meal: CustomMeal, remember: boolean) => {
+      updateWeek((log) => saveCustomMeal(log, date, meal));
+      if (!remember) return;
+      setStored((current) => {
+        const name = meal.name.trim().toLowerCase();
+        const others = current.myMeals.filter((m) => m.name.trim().toLowerCase() !== name);
+        const saved: SavedMeal = { id: `saved-${meal.id}`, name: meal.name.trim(), kcal: meal.kcal, p: meal.p, c: meal.c, f: meal.f };
+        return { ...current, myMeals: [saved, ...others].slice(0, 30) };
+      });
+    },
+    [updateWeek],
+  );
+  const deleteMeal = useCallback((date: string, id: string) => updateWeek((log) => removeCustomMeal(log, date, id)), [updateWeek]);
+  const customMeals = useCallback((date: string) => week.custom[date] ?? [], [week.custom]);
+  const forgetMeal = useCallback(
+    (id: string) => setStored((current) => ({ ...current, myMeals: current.myMeals.filter((m) => m.id !== id) })),
+    [],
+  );
+
   const isDone = useCallback((key: string) => week.items.includes(key), [week.items]);
   const isEaten = useCallback((id: string) => week.meals.includes(id), [week.meals]);
   const isBought = useCallback((food: string) => week.shopping.includes(food), [week.shopping]);
@@ -224,6 +257,11 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
       toggleBought,
       checkIn,
       saveCheckIn,
+      customMeals,
+      saveMeal,
+      deleteMeal,
+      myMeals: stored.myMeals,
+      forgetMeal,
       hintSeen,
       dismissHint,
       resetHints,
@@ -254,6 +292,11 @@ export function PlannerProvider({ children }: { children: React.ReactNode }) {
       toggleBought,
       checkIn,
       saveCheckIn,
+      customMeals,
+      saveMeal,
+      deleteMeal,
+      stored.myMeals,
+      forgetMeal,
       hintSeen,
       dismissHint,
       resetHints,

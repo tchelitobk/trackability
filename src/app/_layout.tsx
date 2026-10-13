@@ -53,6 +53,7 @@ function RootStack() {
       <Stack.Protected guard={onboarded}>
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="log" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="meal" options={{ presentation: 'modal' }} />
         <Stack.Screen name="edit/[section]" options={{ presentation: 'modal' }} />
       </Stack.Protected>
       <Stack.Protected guard={!onboarded}>

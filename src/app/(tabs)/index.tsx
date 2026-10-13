@@ -77,6 +77,8 @@ export default function TodayScreen() {
       toggleSession(task.sessionId!);
       // Logging a session asks how hard it felt; undoing doesn't.
       if (!task.done) setRating(task);
+    } else if (task.custom) {
+      router.push(`/meal?day=${selected}&edit=${task.key}`);
     } else if (task.kind === 'meal') {
       toggleMeal(task.key);
     } else {

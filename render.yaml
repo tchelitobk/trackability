@@ -1,0 +1,19 @@
+# One-click deploy on Render: Dashboard → New → Blueprint → pick this repo.
+# Render asks for ACCESS_PASSWORD (the team password) when you create it.
+services:
+  - type: web
+    name: perform
+    runtime: node
+    plan: free
+    branch: claude/stoic-hamilton-bk06js
+    buildCommand: npm ci && npm run build:web
+    startCommand: npm run serve
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: ACCESS_PASSWORD
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true

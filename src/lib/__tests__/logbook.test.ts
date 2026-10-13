@@ -7,7 +7,9 @@ import {
   migrateLogs,
   progress,
   readiness,
+  removeCustomMeal,
   saveCheckIn,
+  saveCustomMeal,
   setEffort,
   setSessionDone,
   toggleItem,
@@ -58,6 +60,42 @@ describe('logbook', () => {
     expect(readiness(rough.checkIns['2026-09-28'])?.tone).toBe('easy');
     const fresh = saveCheckIn(emptyWeek(), '2026-09-28', { sleepHours: 8, feel: 5 });
     expect(readiness(fresh.checkIns['2026-09-28'])?.tone).toBe('go');
+  });
+
+  it('counts your own meals and drops the planned meal they replace', () => {
+    const fuelDay = fuel.days[0];
+    const lunch = fuelDay.meals.find((m) => m.title.startsWith('Lunch'))!;
+    let week = toggleMeal(emptyWeek(), lunch.id);
+    week = saveCustomMeal(week, fuelDay.date, {
+      id: 'custom-1',
+      name: 'Chipotle bowl',
+      time: lunch.time,
+      kcal: 850,
+      p: 45,
+      c: 95,
+      f: 28,
+      replaces: lunch.id,
+    });
+    // Swapping un-ticks the planned lunch and counts only the real one.
+    expect(week.meals).not.toContain(lunch.id);
+    expect(eatenMacros(fuelDay, week)).toMatchObject({ kcal: 850, p: 45 });
+
+    const tasks = dayTasks(monday, fuelDay, week);
+    expect(tasks.find((t) => t.key === lunch.id)).toBeUndefined();
+    expect(tasks.find((t) => t.key === 'custom-1')).toMatchObject({ done: true, custom: true, title: 'Chipotle bowl' });
+
+    week = removeCustomMeal(week, fuelDay.date, 'custom-1');
+    expect(eatenMacros(fuelDay, week).kcal).toBe(0);
+    expect(dayTasks(monday, fuelDay, week).find((t) => t.key === lunch.id)).toBeDefined();
+  });
+
+  it('edits a saved custom meal in place', () => {
+    const date = fuel.days[0].date;
+    const meal = { id: 'c1', name: 'Wings', time: 1200, kcal: 900, p: 60, c: 10, f: 65 };
+    let week = saveCustomMeal(emptyWeek(), date, meal);
+    week = saveCustomMeal(week, date, { ...meal, kcal: 700 });
+    expect(week.custom[date]).toHaveLength(1);
+    expect(week.custom[date][0].kcal).toBe(700);
   });
 
   it('migrates the original storage format', () => {

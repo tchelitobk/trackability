@@ -9,6 +9,22 @@ export type SessionLog = { effort?: number; at: string };
 
 export type CheckIn = { sleepHours?: number; feel?: Feel; at: string };
 
+/** A meal the athlete adds themselves (eaten out, cooked something else...). */
+export type CustomMeal = {
+  id: string;
+  name: string;
+  time: number;
+  kcal: number;
+  p: number;
+  c: number;
+  f: number;
+  /** Planned meal this was eaten instead of. */
+  replaces?: string;
+};
+
+/** A saved favourite for one-tap re-adding. */
+export type SavedMeal = Pick<CustomMeal, 'id' | 'name' | 'kcal' | 'p' | 'c' | 'f'>;
+
 /** Everything the athlete ticks off in one week. */
 export type WeekLog = {
   sessions: Record<string, SessionLog>;
@@ -18,9 +34,38 @@ export type WeekLog = {
   shopping: string[];
   /** Morning check-ins keyed by ISO date. */
   checkIns: Record<string, CheckIn>;
+  /** The athlete's own meals, keyed by ISO date. */
+  custom: Record<string, CustomMeal[]>;
 };
 
-export const emptyWeek = (): WeekLog => ({ sessions: {}, items: [], meals: [], shopping: [], checkIns: {} });
+export const emptyWeek = (): WeekLog => ({ sessions: {}, items: [], meals: [], shopping: [], checkIns: {}, custom: {} });
+
+/** Calories from macros when only macros are known. */
+export const kcalFromMacros = (p: number, c: number, f: number) => Math.round(p * 4 + c * 4 + f * 9);
+
+export const customMacros = (meal: Pick<CustomMeal, 'kcal' | 'p' | 'c' | 'f'>): Macros => ({
+  p: meal.p,
+  c: meal.c,
+  f: meal.f,
+  kcal: meal.kcal,
+});
+
+export function saveCustomMeal(week: WeekLog, date: string, meal: CustomMeal): WeekLog {
+  const list = week.custom[date] ?? [];
+  const exists = list.some((m) => m.id === meal.id);
+  const next = exists ? list.map((m) => (m.id === meal.id ? meal : m)) : [...list, meal];
+  // A swapped-out planned meal no longer counts as eaten.
+  const meals = meal.replaces ? week.meals.filter((id) => id !== meal.replaces) : week.meals;
+  return { ...week, meals, custom: { ...week.custom, [date]: next } };
+}
+
+export function removeCustomMeal(week: WeekLog, date: string, id: string): WeekLog {
+  return { ...week, custom: { ...week.custom, [date]: (week.custom[date] ?? []).filter((m) => m.id !== id) } };
+}
+
+/** Planned meal ids swapped for the athlete's own meal on this date. */
+export const replacedMeals = (week: WeekLog, date: string) =>
+  new Set((week.custom[date] ?? []).map((m) => m.replaces).filter((id): id is string => Boolean(id)));
 
 export const FEELS: { value: Feel; label: string }[] = [
   { value: 1, label: 'Drained' },
@@ -91,6 +136,8 @@ export type DayTask = {
   /** Session id (sessions/events only). */
   sessionId?: string;
   effort?: number;
+  /** The athlete's own meal (always counts as eaten). */
+  custom?: boolean;
 };
 
 /** One ordered list of everything loggable on a day. */
@@ -124,7 +171,24 @@ export function dayTasks(day: PlanDay, fuel: DayFuel | undefined, week: WeekLog)
       done: week.items.includes(m.key),
     });
   }
+  const swapped = replacedMeals(week, day.date);
+  const planned = new Map((fuel?.meals ?? []).map((m) => [m.id, m]));
+  for (const meal of week.custom[day.date] ?? []) {
+    const instead = meal.replaces ? planned.get(meal.replaces) : undefined;
+    tasks.push({
+      key: meal.id,
+      kind: 'meal',
+      start: meal.time,
+      time: formatClock(meal.time),
+      title: meal.name,
+      detail: `${meal.kcal} kcal${instead ? ` · instead of ${instead.title.toLowerCase()}` : ' · your meal'}`,
+      minutes: 0,
+      done: true,
+      custom: true,
+    });
+  }
   for (const meal of fuel?.meals ?? []) {
+    if (swapped.has(meal.id)) continue;
     tasks.push({
       key: meal.id,
       kind: 'meal',
@@ -139,8 +203,13 @@ export function dayTasks(day: PlanDay, fuel: DayFuel | undefined, week: WeekLog)
   return tasks.sort((a, b) => a.start - b.start);
 }
 
+/** Planned meals ticked off plus the athlete's own meals for the day. */
 export function eatenMacros(fuel: DayFuel, week: WeekLog): Macros {
-  return fuel.meals.filter((m) => week.meals.includes(m.id)).reduce((acc, m) => addMacros(acc, m.totals), ZERO);
+  const swapped = replacedMeals(week, fuel.date);
+  const planned = fuel.meals
+    .filter((m) => week.meals.includes(m.id) && !swapped.has(m.id))
+    .reduce((acc, m) => addMacros(acc, m.totals), ZERO);
+  return (week.custom[fuel.date] ?? []).reduce((acc, m) => addMacros(acc, customMacros(m)), planned);
 }
 
 export function progress(tasks: DayTask[]) {
@@ -156,7 +225,7 @@ export function migrateLogs(saved: {
   shopping?: Record<string, string[]>;
 }): Record<string, WeekLog> {
   const logs: Record<string, WeekLog> = {};
-  for (const [weekId, log] of Object.entries(saved.logs ?? {})) logs[weekId] = { ...emptyWeek(), ...log };
+  for (const [weekId, log] of Object.entries(saved.logs ?? {})) logs[weekId] = { ...emptyWeek(), ...log, custom: log.custom ?? {} };
   const weeks = new Set([
     ...Object.keys(saved.completed ?? {}),
     ...Object.keys(saved.done ?? {}),

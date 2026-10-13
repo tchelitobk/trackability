@@ -30,11 +30,13 @@ export default function LogScreen() {
   const tasks = dayTasks(day, fuelDay, week);
   const sessions = tasks.filter((x) => x.kind === 'session' || x.kind === 'event');
   const meals = tasks.filter((x) => x.kind === 'meal');
+  const planned = meals.filter((m) => !m.custom);
   const habits = tasks.filter((x) => x.kind === 'habit');
   const current = checkIn(day.date);
   const ready = readiness(current);
   const date = fromISODate(day.date);
-  const allEaten = meals.length > 0 && meals.every((m) => m.done);
+  const allEaten = planned.length > 0 && planned.every((m) => m.done);
+  const openMeal = (id?: string) => router.push(id ? `/meal?day=${selected}&edit=${id}` : `/meal?day=${selected}`);
 
   const close = () => (router.canGoBack() ? router.back() : router.replace('/'));
 
@@ -126,11 +128,11 @@ export default function LogScreen() {
           title="Meals"
           subtitle={`${meals.filter((m) => m.done).length} of ${meals.length} eaten`}
           action={
-            meals.length > 0 ? (
+            planned.length > 0 ? (
               <Pressable
                 testID="log-all-meals"
                 accessibilityRole="button"
-                onPress={() => meals.filter((m) => m.done === allEaten).forEach((m) => toggleMeal(m.key))}
+                onPress={() => planned.filter((m) => m.done === allEaten).forEach((m) => toggleMeal(m.key))}
                 hitSlop={8}
               >
                 <Text style={[t.label, { color: colors.primary }]}>{allEaten ? 'Clear all' : 'Ate all as planned'}</Text>
@@ -140,24 +142,26 @@ export default function LogScreen() {
         >
           {meals.map((m, i) => {
             const meal = fuelDay?.meals.find((x) => x.id === m.key);
+            const press = () => (m.custom ? openMeal(m.key) : toggleMeal(m.key));
             return (
               <Pressable
                 key={m.key}
-                accessibilityRole="checkbox"
+                accessibilityRole={m.custom ? 'button' : 'checkbox'}
                 accessibilityState={{ checked: m.done }}
-                onPress={() => toggleMeal(m.key)}
+                onPress={press}
                 style={({ pressed }) => [styles.row, i > 0 && { borderTopWidth: 1, borderTopColor: colors.border }, pressed && shared.pressed]}
               >
                 <View style={styles.flex}>
-                  <Text style={[t.bodyStrong, { color: colors.foreground }, m.done && styles.done]}>{m.title}</Text>
+                  <Text style={[t.bodyStrong, { color: colors.foreground }, m.done && !m.custom && styles.done]}>{m.title}</Text>
                   <Text style={[t.caption, { color: colors.mutedForeground, marginTop: 2 }]} numberOfLines={1}>
-                    {m.time} · {Math.round(meal?.totals.kcal ?? 0)} kcal · {m.detail}
+                    {m.custom ? `${m.time} · ${m.detail} · tap to edit` : `${m.time} · ${Math.round(meal?.totals.kcal ?? 0)} kcal · ${m.detail}`}
                   </Text>
                 </View>
-                <CheckCircle testID={`log-meal-${m.key}`} tone="apricot" done={m.done} label={`${m.done ? 'Undo' : 'Log'} ${m.title}`} onPress={() => toggleMeal(m.key)} />
+                <CheckCircle testID={`log-meal-${m.key}`} tone="apricot" done={m.done} label={m.custom ? `Edit ${m.title}` : `${m.done ? 'Undo' : 'Log'} ${m.title}`} onPress={press} />
               </Pressable>
             );
           })}
+          <Button testID="add-own-meal" compact variant="secondary" icon="plus" label="Add your own meal" onPress={() => openMeal()} />
         </Section>
 
         <Section icon="wind" title="Recovery" subtitle="The small things that make the big sessions land.">

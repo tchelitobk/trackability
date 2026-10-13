@@ -23,10 +23,32 @@ New users go through a 2-minute setup (sport, work hours, training days, sleep, 
 | **Today** | What's up next, with one button to log it. Your whole day in time order (training, meals, recovery), each with a check circle, a morning check-in prompt, and fuel and week progress. |
 | **Plan** | The week day by day. Each session shows its time and effort, a check circle, and a "See workout & why" panel. Change this week's focus from the top card. |
 | **＋ Log** | One place to log a day: how you slept and feel (gives a plain "push / hold back" call), sessions with a 1–10 effort rating, meals (or "ate all as planned"), and recovery habits. Earlier days this week can be logged too. |
-| **Fuel** | Meals timed to training, with eaten vs planned for the day; the two prep sessions step by step; and a checkable shopping list. |
+| **Fuel** | Meals timed to training, with eaten vs planned for the day; add your own meals or swap one in for a planned meal (saved to My meals for one-tap re-use); the two prep sessions step by step; and a checkable shopping list. |
 | **You** | Profile and schedule settings, tips, run setup again, reset. |
 
 Everything is stored on the device (AsyncStorage). Logs are kept per week.
+
+## Share it with your team (private link)
+
+`server/index.mjs` hosts the web version behind a team password. Teammates open the link on their phone, enter the password once (they stay signed in for 60 days), and can **Add to Home Screen** to use it like an app. Each person's data stays on their own phone.
+
+**Deploy on Render (free):**
+
+1. Sign in at [render.com](https://render.com) with GitHub and allow access to this repo.
+2. **New → Blueprint**, pick this repo. Render reads `render.yaml`.
+3. When asked for `ACCESS_PASSWORD`, enter a team password (use something long, e.g. three random words).
+4. Wait for the first build (~5 min). Share the `https://perform-….onrender.com` link and the password.
+
+Free instances sleep after 15 minutes idle, so the first visit after a break takes up to a minute. Every push to the branch redeploys automatically. To lock everyone out, change `ACCESS_PASSWORD` in Render.
+
+**Run the same thing locally:**
+
+```bash
+ACCESS_PASSWORD=pick-a-password npm run preview   # builds, then serves on http://localhost:3000
+npm run test:server                               # server tests
+```
+
+The server is plain Node 20+ with no dependencies, so any Node host works: build with `npm run build:web`, start with `npm run serve`, and set `ACCESS_PASSWORD`.
 
 ## How the schedule is built (`src/lib/scheduler.ts`)
 
@@ -49,7 +71,9 @@ This is general performance guidance, not medical or dietetic advice. Adjust bod
 ## Project layout
 
 ```
-src/app/            routes: onboarding, (tabs)/index · plan · fuel · you, log (modal), edit/[section] (modal)
+src/app/            routes: onboarding, (tabs)/index · plan · fuel · you, log · meal · edit/[section] (modals)
+server/             password-protected web host + tests
+public/             web manifest and home-screen icons
 src/context/        PlannerContext: state, persistence, derived plan + fuel
 src/lib/            pure logic: scheduler, sessions, events, nutrition, foods, recipes, mealPlanner, logbook
 src/lib/__tests__/  jest tests for the engines and the logbook

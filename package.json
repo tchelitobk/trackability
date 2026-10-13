@@ -10,7 +10,11 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
-    "test": "jest"
+    "test": "jest",
+    "build:web": "expo export -p web --output-dir dist",
+    "serve": "node server/index.mjs",
+    "preview": "npm run build:web && node server/index.mjs",
+    "test:server": "node --test server/server.test.mjs"
   },
   "dependencies": {
     "@expo-google-fonts/instrument-serif": "^0.4.1",
@@ -56,5 +60,8 @@
     "testPathIgnorePatterns": [
       "/node_modules/"
     ]
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

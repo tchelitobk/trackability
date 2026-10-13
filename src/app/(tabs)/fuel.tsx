@@ -1,13 +1,14 @@
 import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { Bullet, Card, CheckCircle, Eyebrow, Header, ProgressBar, ProgressRing, Screen, Segmented, SectionTitle, shared, useToneColor, type Tone } from '@/components/ui';
+import { Bullet, Button, Card, CheckCircle, Eyebrow, Header, ProgressBar, ProgressRing, Screen, Segmented, SectionTitle, shared, useToneColor, type Tone } from '@/components/ui';
 import { type as t } from '@/constants/type';
 import { usePlanner } from '@/context/PlannerContext';
 import { useColors } from '@/hooks/useColors';
-import { eatenMacros } from '@/lib/logbook';
+import { eatenMacros, replacedMeals, type CustomMeal } from '@/lib/logbook';
 import type { DayFuel, Meal, PrepBlock } from '@/lib/mealPlanner';
 import { DAY_NAMES, formatClock, fromISODate } from '@/lib/time';
 import type { DayKey, DayLoad } from '@/lib/types';
@@ -57,11 +58,21 @@ export default function FuelScreen() {
 function MealsView({ selected, onSelect }: { selected: DayKey; onSelect: (day: DayKey) => void }) {
   const colors = useColors();
   const tone = useToneColor();
-  const { fuel, week, toggleMeal, isEaten } = usePlanner();
+  const router = useRouter();
+  const { fuel, week, toggleMeal, isEaten, customMeals } = usePlanner();
   const day = fuel.days.find((d) => d.day === selected) ?? fuel.days[0];
   const max = Math.max(...fuel.days.map((d) => d.targets.kcal));
   const min = Math.min(...fuel.days.map((d) => d.targets.kcal));
-  const allEaten = day.meals.every((m) => isEaten(m.id));
+  const swapped = replacedMeals(week, day.date);
+  const own = customMeals(day.date);
+  const planned = day.meals.filter((m) => !swapped.has(m.id));
+  const allEaten = planned.every((m) => isEaten(m.id));
+  type Entry = { time: number; key: string } & ({ kind: 'planned'; meal: Meal } | { kind: 'custom'; custom: CustomMeal });
+  const entries: Entry[] = [
+    ...day.meals.map((meal): Entry => ({ kind: 'planned', time: meal.time, key: meal.id, meal })),
+    ...own.map((custom): Entry => ({ kind: 'custom', time: custom.time, key: custom.id, custom })),
+  ].sort((a, b) => a.time - b.time);
+  const openMeal = (query: string) => router.push(`/meal?day=${day.day}${query}`);
 
   return (
     <>
@@ -97,12 +108,29 @@ function MealsView({ selected, onSelect }: { selected: DayKey; onSelect: (day: D
         eyebrow={`${DAY_NAMES[day.day].toUpperCase()} · ${fromISODate(day.date).getDate()}`}
         title="Meals, timed to training"
         action={allEaten ? 'Clear all' : 'Ate all as planned'}
-        onAction={() => day.meals.filter((m) => isEaten(m.id) === allEaten).forEach((m) => toggleMeal(m.id))}
+        onAction={() => planned.filter((m) => isEaten(m.id) === allEaten).forEach((m) => toggleMeal(m.id))}
       />
       <View style={styles.meals}>
-        {day.meals.map((meal) => (
-          <MealCard key={meal.id} meal={meal} eaten={week.meals.includes(meal.id)} onToggle={() => toggleMeal(meal.id)} />
-        ))}
+        {entries.map((entry) =>
+          entry.kind === 'planned' ? (
+            <MealCard
+              key={entry.key}
+              meal={entry.meal}
+              eaten={week.meals.includes(entry.meal.id)}
+              swappedFor={own.find((m) => m.replaces === entry.meal.id)?.name}
+              onToggle={() => toggleMeal(entry.meal.id)}
+              onSwap={() => openMeal(`&replaces=${entry.meal.id}`)}
+            />
+          ) : (
+            <CustomMealCard
+              key={entry.key}
+              meal={entry.custom}
+              instead={day.meals.find((m) => m.id === entry.custom.replaces)?.title}
+              onEdit={() => openMeal(`&edit=${entry.custom.id}`)}
+            />
+          ),
+        )}
+        <Button testID="fuel-add-meal" variant="secondary" icon="plus" label="Add your own meal" onPress={() => openMeal('')} style={shared.gutter} />
       </View>
     </>
   );
@@ -156,8 +184,29 @@ function DaySummary({ day }: { day: DayFuel }) {
   );
 }
 
-function MealCard({ meal, eaten, onToggle }: { meal: Meal; eaten: boolean; onToggle: () => void }) {
+function MealCard({
+  meal,
+  eaten,
+  swappedFor,
+  onToggle,
+  onSwap,
+}: {
+  meal: Meal;
+  eaten: boolean;
+  swappedFor?: string;
+  onToggle: () => void;
+  onSwap: () => void;
+}) {
   const colors = useColors();
+  if (swappedFor) {
+    return (
+      <Card style={[styles.meal, styles.swapped]}>
+        <Text style={[t.micro, { color: colors.mutedForeground }]}>{formatClock(meal.time)}</Text>
+        <Text style={[t.bodyStrong, styles.struck, { color: colors.foreground, marginTop: 4 }]}>{meal.title}</Text>
+        <Text style={[t.caption, { color: colors.mutedForeground, marginTop: 2 }]}>Swapped for {swappedFor}</Text>
+      </Card>
+    );
+  }
   return (
     <Card style={[styles.meal, eaten && { borderColor: 'rgba(229,195,140,0.35)' }]}>
       <View style={styles.mealHead}>
@@ -186,6 +235,53 @@ function MealCard({ meal, eaten, onToggle }: { meal: Meal; eaten: boolean; onTog
       </View>
       <Text style={[t.micro, { color: colors.mutedForeground, marginTop: 10 }]}>
         {fmt(meal.totals.kcal)} kcal · {fmt(meal.totals.p)} g protein · {fmt(meal.totals.c)} g carbs · {fmt(meal.totals.f)} g fat
+      </Text>
+      {!eaten ? (
+        <Pressable
+          testID={`swap-${meal.id}`}
+          accessibilityRole="button"
+          onPress={onSwap}
+          hitSlop={8}
+          style={({ pressed }) => [styles.swap, { borderTopColor: colors.border }, pressed && shared.pressed]}
+        >
+          <Feather name="repeat" size={13} color={colors.primary} />
+          <Text style={[t.label, { color: colors.primary }]}>Ate something else? Swap it</Text>
+        </Pressable>
+      ) : null}
+    </Card>
+  );
+}
+
+function CustomMealCard({ meal, instead, onEdit }: { meal: CustomMeal; instead?: string; onEdit: () => void }) {
+  const colors = useColors();
+  return (
+    <Card style={[styles.meal, { borderColor: 'rgba(212,241,113,0.3)' }]}>
+      <View style={styles.mealHead}>
+        <View style={styles.flex}>
+          <View style={styles.mealMeta}>
+            <Text style={[t.micro, { color: colors.mutedForeground }]}>{formatClock(meal.time)}</Text>
+            <View style={[styles.prepTag, { borderColor: colors.borderStrong }]}>
+              <Feather name="edit-3" size={10} color={colors.primary} />
+              <Text style={[t.micro, { color: colors.primary, fontSize: 10 }]}>Your meal</Text>
+            </View>
+          </View>
+          <Text style={[t.subheading, { color: colors.foreground, marginTop: 4 }]}>{meal.name}</Text>
+          {instead ? <Text style={[t.caption, { color: colors.mutedForeground, marginTop: 2 }]}>Instead of {instead.toLowerCase()}</Text> : null}
+        </View>
+        <Pressable
+          testID={`edit-meal-${meal.id}`}
+          accessibilityRole="button"
+          accessibilityLabel={`Edit ${meal.name}`}
+          onPress={onEdit}
+          style={({ pressed }) => [styles.edit, { backgroundColor: colors.secondary }, pressed && shared.pressed]}
+        >
+          <Text style={[t.label, { color: colors.foreground }]}>Edit</Text>
+        </Pressable>
+      </View>
+      <Text style={[t.micro, { color: colors.mutedForeground, marginTop: 12 }]}>
+        {fmt(meal.kcal)} kcal{meal.p ? ` · ${fmt(meal.p)} g protein` : ''}
+        {meal.c ? ` · ${fmt(meal.c)} g carbs` : ''}
+        {meal.f ? ` · ${fmt(meal.f)} g fat` : ''}
       </Text>
     </Card>
   );
@@ -330,6 +426,9 @@ const styles = StyleSheet.create({
   items: { borderTopWidth: 1, marginTop: 12, paddingTop: 10, gap: 7 },
   item: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
   struck: { textDecorationLine: 'line-through', opacity: 0.5 },
+  swapped: { opacity: 0.7 },
+  swap: { flexDirection: 'row', alignItems: 'center', gap: 6, borderTopWidth: 1, marginTop: 12, paddingTop: 12 },
+  edit: { borderRadius: 12, paddingHorizontal: 14, minHeight: 36, justifyContent: 'center' },
   prepMeta: { flexDirection: 'row', gap: 8 },
   prepStat: { flexDirection: 'row', alignItems: 'center', gap: 7, borderRadius: 11, paddingHorizontal: 11, paddingVertical: 8 },
   batches: { marginTop: 6 },
